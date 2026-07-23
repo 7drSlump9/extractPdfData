@@ -5,3 +5,4 @@ __pycache__/
 *.PDF
 templates/cnd_joy_ordine.json
 templates/consorzio_nazionale_dettaglianti.json
+*.json
