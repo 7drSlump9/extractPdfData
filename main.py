@@ -9,7 +9,7 @@ deduce un nuovo template dal layout del documento; il template viene salvato,
 cosi' i documenti futuri dello stesso formato non richiedono piu' l'AI.
 
 Uso:
-    python extract_ordine.py <path_pdf>
+    python main.py -eo <path_pdf>
 """
 
 import json
@@ -98,24 +98,38 @@ def stampa_risultati(dati):
         print(f"\n{json.dumps(riga, indent=2, ensure_ascii=False)}")
 
 
+def _print_usage():
+    print("Uso: python main.py <comando> <path_pdf>")
+    print()
+    print("Comandi:")
+    print("  -eo    Estrai dati ordine da PDF")
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Uso: python extract_ordine.py <path_pdf>")
+    if len(sys.argv) < 3:
+        _print_usage()
         sys.exit(1)
 
-    pdf_file = sys.argv[1]
-    if not Path(pdf_file).exists():
-        print(f"Errore: file '{pdf_file}' non trovato")
+    comando = sys.argv[1]
+    pdf_file = sys.argv[2]
+
+    if comando == "-eo":
+        if not Path(pdf_file).exists():
+            print(f"Errore: file '{pdf_file}' non trovato")
+            sys.exit(1)
+
+        print(f"Elaborazione: {pdf_file}")
+        dati, generato_da_ai = estrai_ordine(pdf_file)
+        stampa_risultati(dati)
+
+        json_output = Path(pdf_file).stem + "_estratto.json"
+        with open(json_output, 'w', encoding='utf-8') as f:
+            json.dump(dati, f, indent=2, ensure_ascii=False)
+        print(f"\n\nJSON salvato in: {json_output}")
+        if generato_da_ai:
+            print("NOTA: questo documento e' stato interpretato con un template appena "
+                  "generato dall'AI. Verifica i dati estratti prima di usarli in produzione.")
+    else:
+        print(f"Errore: comando sconosciuto '{comando}'")
+        _print_usage()
         sys.exit(1)
-
-    print(f"Elaborazione: {pdf_file}")
-    dati, generato_da_ai = estrai_ordine(pdf_file)
-    stampa_risultati(dati)
-
-    json_output = Path(pdf_file).stem + "_estratto.json"
-    with open(json_output, 'w', encoding='utf-8') as f:
-        json.dump(dati, f, indent=2, ensure_ascii=False)
-    print(f"\n\nJSON salvato in: {json_output}")
-    if generato_da_ai:
-        print("NOTA: questo documento e' stato interpretato con un template appena "
-              "generato dall'AI. Verifica i dati estratti prima di usarli in produzione.")
