@@ -1,0 +1,93 @@
+{
+  "name": "IPERAL_SUPERMERCATI_ORDER",
+  "description": "Ordine cliente IPERAL SUPERMERCATI con destinatario JOY SRL, layout con intestazione e tabella articoli con codice EAN su riga separata",
+  "signature": [
+    "IPERAL SUPERMERCATI",
+    "CE.DI FRESCHI GIUSSANO",
+    "www.smartbay.it"
+  ],
+  "header_fields": {
+    "numero_ordine": {
+      "type": "regex_full_text",
+      "pattern": "Ordine\\s+Nr\\.\\s+(\\d+)",
+      "group": 1
+    },
+    "data": {
+      "type": "regex_full_text",
+      "pattern": "Data\\s+Ordine\\s+(\\d{2}/\\d{2}/\\d{2})",
+      "group": 1
+    },
+    "partita_iva_cliente": {
+      "type": "regex_column_filtered",
+      "pattern": "P\\.I\\.\\s+([\\d]+)",
+      "x_min": 369,
+      "x_max": 500,
+      "group": 1
+    }
+  },
+  "table": {
+    "start_after_contains": [
+      "Articolo",
+      "Descrizione",
+      "Colli",
+      "UM",
+      "Quantit",
+      "Costo",
+      "Totale"
+    ],
+    "end_markers": [
+      "Tot.Referenze",
+      "Totali"
+    ],
+    "row_detect_pattern": "^\\d{7}\\s",
+    "skip_line_if_matches": "^_{10,}",
+    "columns": [
+      {
+        "name": "codice_articolo",
+        "x_min": 33,
+        "x_max": 130,
+        "value": "first_word"
+      },
+      {
+        "name": "descrizione",
+        "x_min": 138,
+        "x_max": 270,
+        "value": "joined_text"
+      },
+      {
+        "name": "colli",
+        "x_min": 276,
+        "x_max": 290,
+        "value": "numeric"
+      },
+      {
+        "name": "um",
+        "x_min": 293,
+        "x_max": 320,
+        "value": "unit_prefix"
+      },
+      {
+        "name": "quantita",
+        "x_min": 322,
+        "x_max": 400,
+        "value": "numeric"
+      },
+      {
+        "name": "costo",
+        "x_min": 400,
+        "x_max": 455,
+        "value": "numeric"
+      },
+      {
+        "name": "totale",
+        "x_min": 455,
+        "x_max": 510,
+        "value": "numeric"
+      }
+    ],
+    "continuation_field_extract": {
+      "name": "ean",
+      "pattern": "^\\s*\\d\\s+(\\d{13})$"
+    }
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "name": "CND_CONSORZIO_NAZIONALE_DETTAGLIANTI",
+  "description": "Ordine cliente Consorzio Nazionale Dettaglianti Soc.Coop. con tabella articoli multi-riga e dettagli flusso/gestione",
+  "signature": [
+    "Ordine Nr.",
+    "Cliente cui fatturare",
+    "PZxCT:"
+  ],
+  "header_fields": {
+    "numero_ordine": {
+      "type": "regex_full_text",
+      "pattern": "Ordine\\s+Nr\\.:\\s+(\\d+)",
+      "group": 1
+    },
+    "data": {
+      "type": "regex_full_text",
+      "pattern": "Ordine\\s+Nr\\.:\\s+\\d+\\s+Del:\\s+([\\d/]+)",
+      "group": 1
+    },
+    "partita_iva_cliente": {
+      "type": "regex_column_filtered",
+      "pattern": "Partita\\s+IVA\\s+(\\d+)",
+      "x_min": 0,
+      "x_max": 300,
+      "group": 1
+    }
+  },
+  "table": {
+    "start_after_contains": [
+      "Riga",
+      "EAN",
+      "ord.",
+      "Codice",
+      "Descrizione",
+      "Quantità"
+    ],
+    "end_markers": [
+      "T O T A L I"
+    ],
+    "row_detect_pattern": "^\\d+\\s+\\d{13}\\s+\\d+",
+    "skip_line_if_matches": "^(CT\\s+[\\d.,]+\\s+[\\d.,]+|PL\\s+[\\d.,]+)$",
+    "columns": [
+      {
+        "name": "riga",
+        "x_min": 17,
+        "x_max": 50,
+        "value": "first_word"
+      },
+      {
+        "name": "ean",
+        "x_min": 52,
+        "x_max": 110,
+        "value": "first_word"
+      },
+      {
+        "name": "codice",
+        "x_min": 112,
+        "x_max": 175,
+        "value": "first_word"
+      },
+      {
+        "name": "descrizione",
+        "x_min": 177,
+        "x_max": 330,
+        "value": "joined_text"
+      },
+      {
+        "name": "unita",
+        "x_min": 332,
+        "x_max": 360,
+        "value": "unit_prefix"
+      },
+      {
+        "name": "quantita",
+        "x_min": 362,
+        "x_max": 395,
+        "value": "numeric"
+      },
+      {
+        "name": "um_prezzo",
+        "x_min": 595,
+        "x_max": 625,
+        "value": "unit_prefix"
+      },
+      {
+        "name": "prezzo_unitario",
+        "x_min": 626,
+        "x_max": 668,
+        "value": "numeric"
+      },
+      {
+        "name": "promo",
+        "x_min": 669,
+        "x_max": 707,
+        "value": "first_word"
+      },
+      {
+        "name": "importo",
+        "x_min": 708,
+        "x_max": 750,
+        "value": "numeric"
+      },
+      {
+        "name": "iva",
+        "x_min": 751,
+        "x_max": 780,
+        "value": "numeric"
+      }
+    ],
+    "continuation_join_field": "note_riga",
+    "continuation_field_extract": {
+      "name": "pz_per_ct",
+      "pattern": "PZxCT:\\s*.*?PZ\\s+([\\d,]+)"
+    }
+  }
+}

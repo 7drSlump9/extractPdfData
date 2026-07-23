@@ -1,0 +1,94 @@
+{
+  "name": "PELLEGRINI_CENTRAL_FOOD",
+  "description": "Ordine d'acquisto Pellegrini Spa - Divisione Central Food, con tabella articoli plant-based e informazioni logistiche",
+  "signature": [
+    "PELLEGRINISpa",
+    "DIVISIONE CENTRAL FOOD",
+    "Via Torremaggiore, 15 - 00071 Pomezia"
+  ],
+  "header_fields": {
+    "numero_ordine": {
+      "type": "regex_column_filtered",
+      "pattern": "(\\d{7})",
+      "x_min": 0,
+      "x_max": 150,
+      "group": 1
+    },
+    "data": {
+      "type": "regex_column_filtered",
+      "pattern": "(\\d{2}/\\d{2}/\\d{4})",
+      "x_min": 80,
+      "x_max": 200,
+      "group": 1
+    },
+    "partita_iva_cliente": {
+      "type": "regex_full_text",
+      "pattern": "P\\.I\\.\\s+C\\.F\\.\\s+IT\\s+(\\d{11})",
+      "group": 1
+    }
+  },
+  "table": {
+    "start_after_contains": [
+      "RIGA",
+      "ARTICOLO",
+      "DESCRIZIONE",
+      "Q.TA'",
+      "ORDINE"
+    ],
+    "end_markers": [
+      "TOTALE"
+    ],
+    "row_detect_pattern": "^\\d+\\s+\\d+\\s",
+    "skip_line_if_matches": "TOTALE|RIPORTARE",
+    "columns": [
+      {
+        "name": "riga",
+        "x_min": 26,
+        "x_max": 45,
+        "value": "first_word"
+      },
+      {
+        "name": "articolo",
+        "x_min": 45,
+        "x_max": 100,
+        "value": "first_word"
+      },
+      {
+        "name": "descrizione",
+        "x_min": 100,
+        "x_max": 280,
+        "value": "joined_text"
+      },
+      {
+        "name": "vs_cod_confez",
+        "x_min": 280,
+        "x_max": 590,
+        "value": "joined_text"
+      },
+      {
+        "name": "qta_ordine",
+        "x_min": 595,
+        "x_max": 660,
+        "value": "numeric"
+      },
+      {
+        "name": "um",
+        "x_min": 660,
+        "x_max": 695,
+        "value": "first_word"
+      },
+      {
+        "name": "prezzo",
+        "x_min": 695,
+        "x_max": 760,
+        "value": "numeric"
+      },
+      {
+        "name": "dt_cons",
+        "x_min": 755,
+        "x_max": 810,
+        "value": "first_word"
+      }
+    ]
+  }
+}
