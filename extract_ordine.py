@@ -23,15 +23,28 @@ from template_engine import get_lines, line_text, load_templates, match_template
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
-def estrai_ordine(pdf_path):
-    with pdfplumber.open(pdf_path) as pdf:
+def _collect_all_pages(pdf):
+    """Lines + full_text da tutte le pagine (Y offset cumulativo)."""
+    all_lines = []
+    y_offset = 0.0
+    text_parts = []
+    for page in pdf.pages:
         # dedupe_chars: alcuni PDF (report legacy) disegnano due volte lo stesso
         # carattere con un micro-offset per simulare il grassetto (bold-by-double-strike).
         # Senza deduplica, ogni cifra/lettera interessata viene letta due volte
         # (es. "1468451" letto come "11446688445511").
-        page = pdf.pages[0].dedupe_chars(tolerance=1)
-        lines = get_lines(page)
-        full_text = "\n".join(line_text(row) for _, row in lines)
+        page = page.dedupe_chars(tolerance=1)
+        page_lines = get_lines(page)
+        for top, row in page_lines:
+            all_lines.append((top + y_offset, row))
+        text_parts.append("\n".join(line_text(row) for _, row in page_lines))
+        y_offset += float(page.height or 0) + 10.0
+    return all_lines, "\n".join(text_parts)
+
+
+def estrai_ordine(pdf_path):
+    with pdfplumber.open(pdf_path) as pdf:
+        lines, full_text = _collect_all_pages(pdf)
 
         templates = load_templates(TEMPLATES_DIR)
         template = match_template(templates, full_text)
@@ -65,6 +78,7 @@ def estrai_ordine(pdf_path):
                 f"Controlla e correggi manualmente {saved_path} prima di usarlo in produzione."
             )
         return dati, True
+
 
 
 def stampa_risultati(dati):

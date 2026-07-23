@@ -3,3 +3,5 @@ __pycache__/
 *_estratto.json
 *.pdf
 *.PDF
+templates/cnd_joy_ordine.json
+templates/consorzio_nazionale_dettaglianti.json

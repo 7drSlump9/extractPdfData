@@ -188,7 +188,7 @@ def extract_table(table_config, lines):
         if end_markers and any(marker in text_upper for marker in end_markers):
             break
         if skip_pattern and skip_pattern.match(text.strip()):
-            break
+            continue
 
         if row_pattern.match(text):
             flush()
