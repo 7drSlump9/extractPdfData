@@ -149,6 +149,10 @@ def extract_table(table_config, lines):
     current_tokens = None
     current_continuation = []
     in_table = False
+    # Marker di inizio tabella: su PDF nativo spesso stanno sulla stessa riga
+    # di header; su OCR da foto possono comparire su righe diverse. Accumula.
+    seen_start_markers = set()
+    start_markers_upper = [m.upper() for m in start_markers]
 
     def flush():
         nonlocal current_tokens, current_continuation
@@ -181,9 +185,16 @@ def extract_table(table_config, lines):
         text_upper = text.upper()
 
         if not in_table:
-            if start_markers and all(marker.upper() in text_upper for marker in start_markers):
+            if not start_markers_upper:
                 in_table = True
-            continue
+                # non continue: questa riga puo' gia' essere un articolo
+            else:
+                for marker in start_markers_upper:
+                    if marker in text_upper:
+                        seen_start_markers.add(marker)
+                if len(seen_start_markers) >= len(start_markers_upper):
+                    in_table = True
+                continue
 
         if end_markers and any(marker in text_upper for marker in end_markers):
             break
@@ -202,6 +213,7 @@ def extract_table(table_config, lines):
 
     flush()
     return rows
+
 
 
 # ---------------------------------------------------------------------------

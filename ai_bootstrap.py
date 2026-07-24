@@ -1,11 +1,11 @@
 """
 Bootstrap di un nuovo template tramite AI (OpenRouter).
 
-Quando un PDF non corrisponde a nessun template salvato, questo modulo manda
-il layout del documento (testo + posizione x/y di ogni parola) a un modello
-via OpenRouter, chiedendogli di dedurre lo schema del template (vedi
-template_engine.py per il formato) e di estrarre subito i dati per quel
-documento.
+Quando un documento (PDF nativo o layout da OCR di foto) non corrisponde a
+nessun template salvato, questo modulo manda il layout (testo + posizione
+x/y di ogni parola) a un modello via OpenRouter, chiedendogli di dedurre lo
+schema del template (vedi template_engine.py per il formato) e di estrarre
+subito i dati per quel documento.
 
 Il template restituito viene salvato in templates/, cosi' i documenti futuri
 dello stesso formato vengono riconosciuti senza bisogno di richiamare l'AI.
@@ -13,7 +13,7 @@ dello stesso formato vengono riconosciuti senza bisogno di richiamare l'AI.
 Configurazione (file .env nella cartella del progetto, oppure variabili
 d'ambiente):
     OPENROUTER_API_KEY   (obbligatoria)
-    OPENROUTER_MODEL     (opzionale, default: anthropic/claude-sonnet-4.5)
+    OPENROUTER_MODEL     (opzionale, default: anthropic/claude-sonnet-5)
 """
 
 import json
@@ -77,6 +77,16 @@ puo' cadere PRIMA della x dell'etichetta di intestazione della colonna nel testo
 sempre le coordinate REALI delle parole nella tabella fornita sotto, non solo la posizione
 delle etichette di intestazione, per calibrare i confini.
 
+IMPORTANTE su start_after_contains (OCR / foto):
+- I marker NON devono necessariamente comparire sulla STESSA riga: il motore li accumula
+  su righe successive. Scegli 1-3 stringhe STABILI dell'header tabella (es. "Descrizione",
+  "Quantita") che compaiono PRIMA della prima riga articolo.
+- row_detect_pattern deve matchare l'INTERA riga testo di inizio articolo (usa re.match),
+  tipicamente qualcosa come "^\\d{4,}" o "^\\d{5,}\\s" se la riga inizia col codice.
+  NON usare pattern che matchano solo una parola isolata se sulla riga ci sono altre parole.
+- Calibra SEMPRE x_min/x_max sulle coordinate @xNNN delle parole REALI degli articoli,
+  non a caso. Ogni colonna deve coprire le x0 delle parole di quel campo.
+
 Rispondi SOLO con un oggetto JSON valido (nessun testo prima o dopo), con questa forma:
 {
   "template": { ...come sopra... },
@@ -137,9 +147,12 @@ def bootstrap_new_template(lines, full_text):
     layout_dump = _build_layout_dump(lines, full_text)
 
     user_prompt = (
-        "Il documento seguente e' un ordine cliente in PDF il cui layout non corrisponde a "
-        "nessun template gia' noto. Analizza testo e coordinate e genera il template JSON "
-        "richiesto, insieme ai dati estratti per QUESTO documento.\n\n"
+        "Il documento seguente e' un ordine cliente (da PDF nativo oppure da OCR di foto) "
+        "il cui layout non corrisponde a nessun template gia' noto. Analizza testo e "
+        "coordinate e genera il template JSON richiesto, insieme ai dati estratti per "
+        "QUESTO documento.\n"
+        "Se il testo deriva da OCR puo' contenere errori di lettura: usa le coordinate "
+        "reali delle parole per capire colonne e righe, e scegli signature/marker robusti.\n\n"
         + SCHEMA_EXPLANATION
         + "\n\n"
         + layout_dump
