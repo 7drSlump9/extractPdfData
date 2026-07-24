@@ -24,6 +24,7 @@ import requests
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "anthropic/claude-sonnet-5"
+#DEFAULT_MODEL = "google/gemini-2.5-pro"
 
 # ---------------------------------------------------------------------------
 # Schema comune (motore template_engine)

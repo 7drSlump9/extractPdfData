@@ -451,7 +451,10 @@ def _print_usage():
 
 
 def _save_json(dati, stem_source):
-    json_output = Path(stem_source).stem + "_estratto.json"
+    output_dir = Path(__file__).parent / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    json_output = output_dir / (Path(stem_source).stem + "_estratto.json")
     with open(json_output, "w", encoding="utf-8") as f:
         json.dump(dati, f, indent=2, ensure_ascii=False)
     print(f"\n\nJSON salvato in: {json_output}")
