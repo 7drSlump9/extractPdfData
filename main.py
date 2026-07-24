@@ -2,11 +2,14 @@
 """
 Estrattore dati ordini cliente da PDF o immagini - basato su template.
 
-Ogni formato di documento (un cliente/generatore) e' descritto da un template
-JSON in templates/ (vedi template_engine.py per lo schema). Quando un documento
-non corrisponde a nessun template noto, viene interpellata un'AI (Claude) che
-deduce un nuovo template dal layout; il template viene salvato, cosi' i
-documenti futuri dello stesso formato non richiedono piu' l'AI.
+Sorgenti layout (policy diverse):
+  - native     : PDF con testo digitale (-eo, testo ok)
+  - ocr_pdf    : PDF scansionato / sola immagine (-eo fallback OCR)
+  - ocr_image  : foto (-eoi)
+
+PDF nativo: prompt AI "native", template salvato in templates/ (gate leggero).
+OCR: prompt AI "ocr", template salvato solo se quality-gate STRETTO
+(altrimenti dati AI one-shot senza inquinare templates/).
 
 Uso:
     python main.py -eo <path_pdf>
@@ -22,6 +25,18 @@ import pdfplumber
 from template_engine import get_lines, line_text, load_templates, match_template, apply_template
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+# Template da OCR che passano il gate stretto (non auto-promossi in root)
+TEMPLATES_DRAFT_OCR_DIR = TEMPLATES_DIR / "draft_ocr"
+
+# Sotto questa soglia di caratteri utili il PDF e' considerato "senza testo"
+# (scansione / sola immagine) e si tenta l'OCR.
+MIN_NATIVE_TEXT_CHARS = 20
+
+# Risoluzione render pagine PDF per OCR (dpi). 200 bilancia qualita'/tempo.
+PDF_OCR_DPI = 200
+
+# Gate OCR: frazione minima righe utili motore vs AI per salvare template
+OCR_TEMPLATE_SAVE_RATIO = 0.8
 
 
 def _collect_all_pages(pdf):
@@ -32,8 +47,6 @@ def _collect_all_pages(pdf):
     for page in pdf.pages:
         # dedupe_chars: alcuni PDF (report legacy) disegnano due volte lo stesso
         # carattere con un micro-offset per simulare il grassetto (bold-by-double-strike).
-        # Senza deduplica, ogni cifra/lettera interessata viene letta due volte
-        # (es. "1468451" letto come "11446688445511").
         page = page.dedupe_chars(tolerance=1)
         page_lines = get_lines(page)
         for top, row in page_lines:
@@ -41,6 +54,68 @@ def _collect_all_pages(pdf):
         text_parts.append("\n".join(line_text(row) for _, row in page_lines))
         y_offset += float(page.height or 0) + 10.0
     return all_lines, "\n".join(text_parts)
+
+
+def _has_usable_text(full_text):
+    return len((full_text or "").strip()) >= MIN_NATIVE_TEXT_CHARS
+
+
+def _embedded_fullpage_image(page):
+    """
+    Se la pagina e' essenzialmente una sola immagine full-page (scansione),
+    ritorna un PIL.Image dall'embedded ad alta risoluzione; altrimenti None.
+    """
+    import io
+    from PIL import Image
+
+    images = page.images or []
+    if len(images) != 1:
+        return None
+    im = images[0]
+    pw = float(page.width or 0) or 1.0
+    ph = float(page.height or 0) or 1.0
+    if float(im.get("x0") or 0) > 5 or float(im.get("top") or 0) > 5:
+        return None
+    if float(im.get("width") or 0) < pw * 0.85 or float(im.get("height") or 0) < ph * 0.85:
+        return None
+    try:
+        data = im["stream"].get_data()
+        pil = Image.open(io.BytesIO(data))
+        pil.load()
+        return pil.copy()
+    except Exception:
+        return None
+
+
+def _collect_pages_via_ocr(pdf, dpi=PDF_OCR_DPI):
+    """
+    OCR pagine PDF scansionate. Preferisce l'immagine embedded full-page
+    (alta res); altrimenti render a dpi.
+    """
+    from image_ocr import collect_lines_from_pil_images
+
+    images = []
+    labels = []
+    sources = []
+    for i, page in enumerate(pdf.pages):
+        embedded = _embedded_fullpage_image(page)
+        if embedded is not None:
+            images.append(embedded)
+            labels.append(f"pagina {i + 1} (embedded)")
+            sources.append("embedded")
+        else:
+            page_image = page.to_image(resolution=dpi)
+            images.append(page_image.original.copy())
+            labels.append(f"pagina {i + 1} (render {dpi}dpi)")
+            sources.append("render")
+
+    n_emb = sources.count("embedded")
+    n_ren = sources.count("render")
+    print(
+        f"OCR su {len(images)} pagina/e PDF "
+        f"(embedded={n_emb}, render={n_ren})..."
+    )
+    return collect_lines_from_pil_images(images, labels=labels)
 
 
 def _valore_utile(v):
@@ -63,6 +138,52 @@ def _righe_quality(righe):
     return good
 
 
+def _riga_has_identity(riga):
+    """True se la riga ha codice e/o descrizione utili (non solo qty/prezzo)."""
+    if not isinstance(riga, dict):
+        return False
+    keys = ("codice_articolo", "codice", "articolo", "descrizione", "description")
+    for k in keys:
+        if k in riga and _valore_utile(riga.get(k)):
+            return True
+    # fallback: qualsiasi campo testuale non numerico lungo
+    for k, v in riga.items():
+        if not _valore_utile(v):
+            continue
+        s = str(v).strip()
+        if any(ch.isalpha() for ch in s) and len(s) >= 3:
+            return True
+    return False
+
+
+def _identity_ratio(righe):
+    if not righe:
+        return 0.0
+    n = sum(1 for r in righe if _riga_has_identity(r))
+    return n / max(len(righe), 1)
+
+
+def _attach_meta(dati, *, source, extraction_mode, template_saved, generato_da_ai,
+                 q_ai=None, q_motore=None, template_path=None):
+    out = dict(dati or {})
+    out["source"] = source
+    out["extraction_mode"] = extraction_mode
+    out["template_saved"] = bool(template_saved)
+    out["generato_da_ai"] = bool(generato_da_ai)
+    quality = {
+        "righe_totali": len(out.get("righe") or []),
+        "righe_utili": _righe_quality(out.get("righe")),
+    }
+    if q_ai is not None:
+        quality["righe_utili_ai"] = q_ai
+    if q_motore is not None:
+        quality["righe_utili_motore"] = q_motore
+    if template_path is not None:
+        quality["template_path"] = str(template_path)
+    out["quality"] = quality
+    return out
+
+
 def _pack_ai_dati(dati_ai, template):
     dati_out = dict(dati_ai or {})
     dati_out.setdefault("formato", (template or {}).get("name", "AI_UNSAVED"))
@@ -79,95 +200,202 @@ def _match_or_none(lines, full_text):
     return None
 
 
-def _bootstrap_ai(lines, full_text):
+def _bootstrap_ai(lines, full_text, mode):
+    if not _has_usable_text(full_text):
+        raise RuntimeError(
+            "Impossibile chiamare l'AI: nessun testo/layout disponibile dal documento. "
+            "Se e' un PDF scansionato, verifica che Tesseract OCR sia installato "
+            "(tesseract --version) con lingue ita/eng, oppure usa "
+            "python main.py -eoi <immagine>."
+        )
     print("Formato non riconosciuto da nessun template esistente.")
-    print("Interpello l'AI per dedurre un nuovo template...")
+    print(f"Interpello l'AI (mode={mode}) per dedurre template/dati...")
     from ai_bootstrap import bootstrap_new_template, save_template
 
-    dati_ai, nuovo_template = bootstrap_new_template(lines, full_text)
+    dati_ai, nuovo_template = bootstrap_new_template(lines, full_text, mode=mode)
     return dati_ai, nuovo_template, save_template
 
 
-def _estrai_da_layout_pdf(lines, full_text):
-    """Path -eo: comportamento originale. Template AI SEMPRE salvato."""
+def _estrai_native(lines, full_text, source="native"):
+    """
+    PDF testo digitale: prompt native, template in templates/ (gate leggero).
+    Ritorna dati (con meta).
+    """
     matched = _match_or_none(lines, full_text)
     if matched is not None:
-        return matched
-
-    dati_ai, nuovo_template, save_template = _bootstrap_ai(lines, full_text)
-    saved_path = save_template(nuovo_template, TEMPLATES_DIR)
-    print(f"Nuovo template salvato in: {saved_path}")
-
-    # IMPORTANTE: non ci fidiamo dei 'dati' restituiti direttamente dall'AI
-    # (sono una lettura una tantum del modello, non provano che il template
-    # generato funzioni). Riapplichiamo subito il template appena salvato
-    # con lo stesso motore deterministico usato per tutti i documenti futuri,
-    # cosi' un template rotto viene scoperto immediatamente, non alla prossima
-    # fattura dello stesso cliente.
-    dati = apply_template(nuovo_template, lines, full_text)
-
-    righe_ai = len(dati_ai.get("righe", []))
-    righe_motore = len(dati.get("righe", []))
-    if righe_motore == 0 or righe_motore != righe_ai:
-        print(
-            f"ATTENZIONE: il template generato non e' affidabile "
-            f"(l'AI aveva estratto {righe_ai} righe, il motore deterministico "
-            f"ne estrae {righe_motore} riapplicando lo stesso template salvato). "
-            f"Controlla e correggi manualmente {saved_path} prima di usarlo in produzione."
+        dati, _ = matched
+        return _attach_meta(
+            dati,
+            source=source,
+            extraction_mode="template",
+            template_saved=False,
+            generato_da_ai=False,
         )
-    return dati, True
+
+    dati_ai, nuovo_template, save_template = _bootstrap_ai(lines, full_text, mode="native")
+    saved_path = save_template(nuovo_template, TEMPLATES_DIR)
+    print(f"Nuovo template (native) salvato in: {saved_path}")
+
+    # Riapplica template: i dati AI non provano che il template funzioni.
+    dati = apply_template(nuovo_template, lines, full_text)
+    q_ai = _righe_quality(dati_ai.get("righe", []))
+    q_motore = _righe_quality(dati.get("righe", []))
+    righe_ai = len(dati_ai.get("righe", []) or [])
+    righe_motore = len(dati.get("righe", []) or [])
+
+    if q_motore == 0 or (righe_ai > 0 and righe_motore == 0):
+        print(
+            f"ATTENZIONE: template native debole "
+            f"(AI {q_ai}/{righe_ai} utili, motore {q_motore}/{righe_motore}). "
+            f"Uso dati AI per questo documento; controlla {saved_path}."
+        )
+        packed = _pack_ai_dati(dati_ai, nuovo_template)
+        return _attach_meta(
+            packed,
+            source=source,
+            extraction_mode="ai_oneshot",
+            template_saved=True,
+            generato_da_ai=True,
+            q_ai=q_ai,
+            q_motore=q_motore,
+            template_path=saved_path,
+        )
+
+    if q_motore < q_ai or righe_motore != righe_ai:
+        print(
+            f"ATTENZIONE: template native da verificare "
+            f"(motore {q_motore}/{righe_motore}, AI {q_ai}/{righe_ai}). "
+            f"Controlla {saved_path}."
+        )
+
+    return _attach_meta(
+        dati,
+        source=source,
+        extraction_mode="template",
+        template_saved=True,
+        generato_da_ai=True,
+        q_ai=q_ai,
+        q_motore=q_motore,
+        template_path=saved_path,
+    )
 
 
-def _estrai_da_layout_image(lines, full_text):
-    """Path -eoi: quality-gate. Non salva template se motore non riproduce le righe."""
+def _estrai_ocr(lines, full_text, source="ocr_image"):
+    """
+    OCR (foto o PDF scansionato): prompt ocr.
+    Template salvato in draft_ocr/ SOLO se gate stretto; altrimenti ai_oneshot.
+    """
     matched = _match_or_none(lines, full_text)
     if matched is not None:
-        return matched
+        dati, _ = matched
+        return _attach_meta(
+            dati,
+            source=source,
+            extraction_mode="template",
+            template_saved=False,
+            generato_da_ai=False,
+        )
 
-    dati_ai, nuovo_template, save_template = _bootstrap_ai(lines, full_text)
-    dati = apply_template(nuovo_template, lines, full_text)
+    dati_ai, nuovo_template, save_template = _bootstrap_ai(lines, full_text, mode="ocr")
+    dati_motore = apply_template(nuovo_template, lines, full_text)
 
     righe_ai = dati_ai.get("righe", []) or []
-    righe_motore = dati.get("righe", []) or []
+    righe_motore = dati_motore.get("righe", []) or []
     q_ai = _righe_quality(righe_ai)
     q_motore = _righe_quality(righe_motore)
+    id_ai = _identity_ratio(righe_ai)
+    id_motore = _identity_ratio(righe_motore)
 
-    template_ok = q_motore > 0 and q_motore >= max(1, int(0.6 * max(q_ai, 1)))
+    # Gate stretto: motore riproduce bene + almeno parte delle righe ha identita'
+    template_ok = (
+        q_motore > 0
+        and q_ai > 0
+        and q_motore >= max(1, int(OCR_TEMPLATE_SAVE_RATIO * max(q_ai, 1)))
+        and id_motore >= 0.5
+    )
 
     if not template_ok:
         print(
-            f"ATTENZIONE: template AI NON salvato "
-            f"(qualita' motore={q_motore}/{len(righe_motore)} righe utili, "
-            f"AI={q_ai}/{len(righe_ai)}). "
-            f"Uso i dati grezzi dell'AI solo per QUESTO documento."
+            f"ATTENZIONE: template OCR NON salvato "
+            f"(motore utili={q_motore}/{len(righe_motore)} id={id_motore:.0%}, "
+            f"AI utili={q_ai}/{len(righe_ai)} id={id_ai:.0%}). "
+            f"Uso dati grezzi AI one-shot per QUESTO documento."
         )
         if q_ai >= q_motore and q_ai > 0:
-            return _pack_ai_dati(dati_ai, nuovo_template), True
-        if q_motore > 0:
-            return dati, True
-        return _pack_ai_dati(dati_ai, nuovo_template), True
+            packed = _pack_ai_dati(dati_ai, nuovo_template)
+        elif q_motore > 0:
+            packed = dati_motore
+        else:
+            packed = _pack_ai_dati(dati_ai, nuovo_template)
+        return _attach_meta(
+            packed,
+            source=source,
+            extraction_mode="ai_oneshot",
+            template_saved=False,
+            generato_da_ai=True,
+            q_ai=q_ai,
+            q_motore=q_motore,
+        )
 
-    saved_path = save_template(nuovo_template, TEMPLATES_DIR)
-    print(f"Nuovo template salvato in: {saved_path}")
-
+    saved_path = save_template(nuovo_template, TEMPLATES_DRAFT_OCR_DIR)
+    print(
+        f"Template OCR (draft) salvato in: {saved_path}\n"
+        f"  (non e' in templates/ root: promuovi a mano dopo verifica)"
+    )
     if q_motore != q_ai or len(righe_motore) != len(righe_ai):
         print(
-            f"ATTENZIONE: template parzialmente affidabile "
-            f"(motore {q_motore}/{len(righe_motore)} utili, "
-            f"AI {q_ai}/{len(righe_ai)}). "
-            f"Controlla {saved_path} prima della produzione."
+            f"ATTENZIONE: draft OCR parziale "
+            f"(motore {q_motore}/{len(righe_motore)}, AI {q_ai}/{len(righe_ai)})."
         )
-    return dati, True
+
+    return _attach_meta(
+        dati_motore,
+        source=source,
+        extraction_mode="template",
+        template_saved=True,
+        generato_da_ai=True,
+        q_ai=q_ai,
+        q_motore=q_motore,
+        template_path=saved_path,
+    )
 
 
 def estrai_ordine(pdf_path):
+    """
+    -eo: native se c'e' testo; altrimenti OCR PDF (source=ocr_pdf).
+    Ritorna solo il dict dati (con meta).
+    """
     with pdfplumber.open(pdf_path) as pdf:
         lines, full_text = _collect_all_pages(pdf)
-        return _estrai_da_layout_pdf(lines, full_text)
+
+        if _has_usable_text(full_text):
+            return _estrai_native(lines, full_text, source="native")
+
+        print(
+            "PDF senza testo nativo estraibile (probabile scansione o sola immagine). "
+            "Provo OCR (immagine embedded o render pagine)..."
+        )
+        try:
+            lines, full_text = _collect_pages_via_ocr(pdf)
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"Fallback OCR sul PDF fallito: {e}\n"
+                "Installa Tesseract (https://github.com/UB-Mannheim/tesseract/wiki) "
+                "con lingue Italian+English, oppure usa: python main.py -eoi <img>"
+            ) from e
+
+        if not _has_usable_text(full_text):
+            raise RuntimeError(
+                "OCR non ha estratto testo utile dal PDF. "
+                "Verifica qualita' della scansione e installazione Tesseract "
+                "(tesseract --version) con lingue ita/eng."
+            )
+
+        return _estrai_ocr(lines, full_text, source="ocr_pdf")
 
 
 def estrai_ordine_immagini(image_paths):
-    """OCR multipagina (N immagini = N pagine), poi path -eoi con quality-gate."""
+    """-eoi: OCR multipagina, source=ocr_image."""
     from image_ocr import collect_lines_from_images, validate_image_paths
 
     paths = validate_image_paths(image_paths)
@@ -179,15 +407,28 @@ def estrai_ordine_immagini(image_paths):
             "Verifica qualita' foto e che Tesseract sia installato "
             "(tesseract --version) con lingue ita/eng."
         )
-    return _estrai_da_layout_image(lines, full_text)
+    return _estrai_ocr(lines, full_text, source="ocr_image")
 
 
 def stampa_risultati(dati):
     print("\n" + "=" * 80)
     print(f"ORDINE ESTRATTO - Formato: {dati.get('formato', 'N/A')}")
+    print(
+        f"source={dati.get('source', '?')}  "
+        f"mode={dati.get('extraction_mode', '?')}  "
+        f"template_saved={dati.get('template_saved', '?')}"
+    )
+    q = dati.get("quality") or {}
+    if q:
+        print(
+            f"quality: righe={q.get('righe_totali')} utili={q.get('righe_utili')} "
+            f"ai={q.get('righe_utili_ai')} motore={q.get('righe_utili_motore')}"
+        )
     print("=" * 80)
+    skip = {"formato", "righe", "source", "extraction_mode", "template_saved",
+            "generato_da_ai", "quality"}
     for key, value in dati.items():
-        if key in ("formato", "righe"):
+        if key in skip:
             continue
         print(f"{key}: {value}")
 
@@ -205,20 +446,26 @@ def _print_usage():
     print("  python main.py -eoi <img1> [img2 ...]")
     print()
     print("Comandi:")
-    print("  -eo     Estrai dati ordine da PDF")
-    print("  -eoi    Estrai dati ordine da una o piu' immagini (OCR, ordine = pagine)")
+    print("  -eo     PDF: testo nativo (template riusabile) oppure OCR se scansione")
+    print("  -eoi    Immagini/foto (OCR, prompt dedicato, template solo se gate ok)")
 
 
-def _save_json(dati, stem_source, generato_da_ai):
+def _save_json(dati, stem_source):
     json_output = Path(stem_source).stem + "_estratto.json"
     with open(json_output, "w", encoding="utf-8") as f:
         json.dump(dati, f, indent=2, ensure_ascii=False)
     print(f"\n\nJSON salvato in: {json_output}")
-    if generato_da_ai:
-        print(
-            "NOTA: questo documento e' stato interpretato con un template appena "
-            "generato dall'AI. Verifica i dati estratti prima di usarli in produzione."
-        )
+    if dati.get("generato_da_ai"):
+        if dati.get("extraction_mode") == "ai_oneshot":
+            print(
+                "NOTA: estrazione AI one-shot (nessun template riusabile salvato in root). "
+                "Verifica i dati prima della produzione."
+            )
+        else:
+            print(
+                "NOTA: template generato dall'AI. Verifica i dati e il file template "
+                "prima della produzione."
+            )
 
 
 if __name__ == "__main__":
@@ -235,9 +482,14 @@ if __name__ == "__main__":
             sys.exit(1)
 
         print(f"Elaborazione: {pdf_file}")
-        dati, generato_da_ai = estrai_ordine(pdf_file)
+        try:
+            dati = estrai_ordine(pdf_file)
+        except (FileNotFoundError, ValueError, RuntimeError) as e:
+            print(f"Errore: {e}")
+            sys.exit(1)
+
         stampa_risultati(dati)
-        _save_json(dati, pdf_file, generato_da_ai)
+        _save_json(dati, pdf_file)
 
     elif comando == "-eoi":
         image_files = sys.argv[2:]
@@ -248,13 +500,13 @@ if __name__ == "__main__":
 
         print(f"Elaborazione immagini: {', '.join(image_files)}")
         try:
-            dati, generato_da_ai = estrai_ordine_immagini(image_files)
+            dati = estrai_ordine_immagini(image_files)
         except (FileNotFoundError, ValueError, RuntimeError) as e:
             print(f"Errore: {e}")
             sys.exit(1)
 
         stampa_risultati(dati)
-        _save_json(dati, image_files[0], generato_da_ai)
+        _save_json(dati, image_files[0])
 
     else:
         print(f"Errore: comando sconosciuto '{comando}'")

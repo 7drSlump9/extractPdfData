@@ -216,25 +216,27 @@ def _line_text(row):
     return " ".join(w["text"] for w in row)
 
 
-def collect_lines_from_images(image_paths, lang: str = "ita+eng"):
+def collect_lines_from_pil_images(images, lang: str = "ita+eng", labels=None):
     """
-    OCR multipagina: N immagini in ordine = N pagine.
+    OCR multipagina da oggetti PIL.Image (es. pagine PDF renderizzate).
     Ritorna (all_lines, full_text) con Y offset cumulativo tra pagine,
     stesso contratto di main._collect_all_pages sul PDF.
     """
-    if not image_paths:
+    if not images:
         raise ValueError("Nessuna immagine fornita")
 
     all_lines = []
     y_offset = 0.0
     text_parts = []
 
-    for path in image_paths:
-        path = Path(path)
-        with Image.open(path) as im:
-            words, page_height, degrees = _ocr_page_words(im, lang=lang)
+    for i, im in enumerate(images):
+        label = None
+        if labels and i < len(labels):
+            label = labels[i]
+        words, page_height, degrees = _ocr_page_words(im, lang=lang)
         if degrees:
-            print(f"  OCR auto-rotate {path.name}: {degrees}°")
+            tag = label or f"pagina {i + 1}"
+            print(f"  OCR auto-rotate {tag}: {degrees}°")
 
         page_lines = _words_to_lines(words)
         for top, row in page_lines:
@@ -245,8 +247,39 @@ def collect_lines_from_images(image_paths, lang: str = "ita+eng"):
     return all_lines, "\n".join(text_parts)
 
 
+def collect_lines_from_images(image_paths, lang: str = "ita+eng"):
+    """
+    OCR multipagina: N immagini in ordine = N pagine.
+    Ritorna (all_lines, full_text) con Y offset cumulativo tra pagine,
+    stesso contratto di main._collect_all_pages sul PDF.
+    """
+    if not image_paths:
+        raise ValueError("Nessuna immagine fornita")
+
+    images = []
+    labels = []
+    opened = []
+    try:
+        for path in image_paths:
+            path = Path(path)
+            im = Image.open(path)
+            opened.append(im)
+            # load() forza la lettura prima di chiudere il file
+            im.load()
+            images.append(im.copy())
+            labels.append(path.name)
+        return collect_lines_from_pil_images(images, lang=lang, labels=labels)
+    finally:
+        for im in opened:
+            try:
+                im.close()
+            except Exception:
+                pass
+
+
 def validate_image_paths(paths):
     """Valida lista path: esistono e sono immagini supportate. Ritorna list[Path]."""
+
     resolved = []
     for p in paths:
         path = Path(p)

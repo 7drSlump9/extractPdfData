@@ -1,14 +1,13 @@
 """
 Bootstrap di un nuovo template tramite AI (OpenRouter).
 
-Quando un documento (PDF nativo o layout da OCR di foto) non corrisponde a
-nessun template salvato, questo modulo manda il layout (testo + posizione
-x/y di ogni parola) a un modello via OpenRouter, chiedendogli di dedurre lo
-schema del template (vedi template_engine.py per il formato) e di estrarre
-subito i dati per quel documento.
+Due modalita' distinte (stesso schema motore, prompt e priorita' diverse):
 
-Il template restituito viene salvato in templates/, cosi' i documenti futuri
-dello stesso formato vengono riconosciuti senza bisogno di richiamare l'AI.
+- mode="native": PDF con testo estraibile (coordinate stabili). Obiettivo =
+  template riusabile e deterministico.
+- mode="ocr": layout da OCR (foto o PDF scansionato). Obiettivo = dati utili
+  per QUESTO documento; template solo se il chiamante decide di salvarlo
+  (quality-gate stretto). Tolleranza a rumore OCR e layout side-by-side.
 
 Configurazione (file .env nella cartella del progetto, oppure variabili
 d'ambiente):
@@ -26,76 +25,209 @@ import requests
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "anthropic/claude-sonnet-5"
 
-SCHEMA_EXPLANATION = """
-Devi produrre un TEMPLATE in JSON con questa struttura esatta:
+# ---------------------------------------------------------------------------
+# Schema comune (motore template_engine)
+# ---------------------------------------------------------------------------
+_SCHEMA_CORE = """
+Devi produrre un TEMPLATE in JSON con questa struttura:
 
 {
   "name": "NOME_BREVE_MAIUSCOLO",
   "description": "descrizione libera del layout",
   "signature": ["stringa univoca 1", "stringa univoca 2"],
   "header_fields": {
-    "numero_ordine": { <regola di estrazione> },
-    "data": { <regola di estrazione> },
-    "partita_iva_cliente": { <regola di estrazione> }
+    "numero_ordine": { <regola> },
+    "data": { <regola> },
+    "partita_iva_cliente": { <regola> }
   },
-  "table": {
-    "start_after_contains": ["parole", "che", "compaiono", "nella", "riga", "di", "intestazione", "della", "tabella"],
-    "end_markers": ["stringhe che segnano la fine della tabella (es. TOTALE)"],
-    "row_detect_pattern": "regex Python che riconosce l'inizio di una nuova riga articolo",
-    "skip_line_if_matches": "(opzionale) regex: se una riga la soddisfa, interrompi la lettura tabella",
-    "columns": [
-      {"name": "nome_campo", "x_min": 0, "x_max": 100, "value": "first_word|joined_text|numeric|unit_prefix"}
-    ],
-    "continuation_join_field": "(opzionale) nome campo dove accumulare le righe extra sotto la riga principale come testo grezzo",
-    "continuation_field_extract": {"name": "campo", "pattern": "regex con un gruppo di cattura da cercare nelle righe extra"}
-  }
+  "table": { <FORM A rows OPPURE FORM B side_by_side_items> }
 }
 
-Le "signature" devono essere stringhe che identificano IN MODO UNIVOCO questo layout
-(nome del cliente/mittente, diciture fisse specifiche di questo modulo) - NON usare
-parole generiche come "Ordine" o "Descrizione" che potrebbero comparire in altri layout.
-
-Regole di estrazione per header_fields (scegli il tipo adatto):
-- {"type": "regex_full_text", "pattern": "...(gruppo)...", "group": 1}
-  cerca nel testo intero del documento.
-- {"type": "regex_column_filtered", "pattern": "...", "x_min": 0, "x_max": 300, "group": 1}
-  cerca riga per riga, ma considerando solo le parole con coordinata x0 nel range indicato
-  (utile quando lo stesso testo, es. "Partita IVA", compare piu' volte in punti diversi
-  della pagina e serve isolare la colonna giusta).
-- {"type": "label_then_value_below", "label_pattern": "...", "value_pattern": "...(gruppi)...", "group": 1, "lookahead_lines": 5}
-  usa quando l'etichetta (es. "NUMERO DATA") e il valore effettivo sono su righe diverse.
-
-I "value" delle colonne della tabella:
-- "first_word": prende la prima parola trovata nel range di colonna
-- "joined_text": unisce tutte le parole trovate nel range con uno spazio
-- "numeric": prende la prima parola nel range che sia un numero (cifre, punti, virgole)
-- "unit_prefix": prende la prima parola nel range che NON sia un numero (es. unita' di misura CT/KG/NU)
-
-IMPORTANTE su x_min/x_max delle colonne: nei documenti generati da sistemi legacy i valori
-numerici sono spesso allineati a destra nella colonna, quindi la loro x0 (inizio parola)
-puo' cadere PRIMA della x dell'etichetta di intestazione della colonna nel testo. Guarda
-sempre le coordinate REALI delle parole nella tabella fornita sotto, non solo la posizione
-delle etichette di intestazione, per calibrare i confini.
-
-IMPORTANTE su start_after_contains (OCR / foto):
-- I marker NON devono necessariamente comparire sulla STESSA riga: il motore li accumula
-  su righe successive. Scegli 1-3 stringhe STABILI dell'header tabella (es. "Descrizione",
-  "Quantita") che compaiono PRIMA della prima riga articolo.
-- row_detect_pattern deve matchare l'INTERA riga testo di inizio articolo (usa re.match),
-  tipicamente qualcosa come "^\\d{4,}" o "^\\d{5,}\\s" se la riga inizia col codice.
-  NON usare pattern che matchano solo una parola isolata se sulla riga ci sono altre parole.
-- Calibra SEMPRE x_min/x_max sulle coordinate @xNNN delle parole REALI degli articoli,
-  non a caso. Ogni colonna deve coprire le x0 delle parole di quel campo.
-
-Rispondi SOLO con un oggetto JSON valido (nessun testo prima o dopo), con questa forma:
+FORM A - tabella classica (una riga orizzontale = un articolo), default:
 {
-  "template": { ...come sopra... },
+  "layout": "rows",
+  "start_after_contains": ["parole header tabella"],
+  "end_markers": ["TOTALE"],
+  "row_detect_pattern": "regex inizio riga articolo (re.match sull'intera riga)",
+  "skip_line_if_matches": "(opzionale) regex da saltare",
+  "columns": [
+    {"name": "nome_campo", "x_min": 0, "x_max": 100, "value": "first_word|joined_text|numeric|unit_prefix"}
+  ],
+  "continuation_join_field": "(opzionale)",
+  "continuation_field_extract": {"name": "campo", "pattern": "regex con un gruppo"}
+}
+
+FORM B - articoli AFFIANCATI (N colonne verticali = N prodotti sulla stessa Y):
+usa se sulla STESSA Y compaiono N valori a X diverse (es. "NR NR NR", tre quantita').
+NON unire le colonne in un solo articolo.
+{
+  "layout": "side_by_side_items",
+  "start_after_contains": [],
+  "end_markers": [],
+  "item_x_bands": [
+    {"x_min": 2300, "x_max": 2365},
+    {"x_min": 2365, "x_max": 2415}
+  ],
+  "fields": [
+    {"name": "codice_articolo", "mode": "first_line", "skip_if_match": "^(NR|\\\\d)"},
+    {"name": "descrizione", "mode": "join_lines", "until_match": "^(NR|\\\\d)", "max_lines": 4},
+    {"name": "quantita", "mode": "nth_regex", "pattern": "^[\\\\d.,]+$", "n": 0},
+    {"name": "prezzo_unitario", "mode": "nth_regex", "pattern": "^[\\\\d.,]+$", "n": 1},
+    {"name": "totale_riga", "mode": "nth_regex", "pattern": "^[\\\\d.,]+$", "n": 2}
+  ]
+}
+
+Regole header_fields:
+- {"type": "regex_full_text", "pattern": "...(gruppo)...", "group": 1}
+- {"type": "regex_column_filtered", "pattern": "...", "x_min": 0, "x_max": 300, "group": 1}
+- {"type": "label_then_value_below", "label_pattern": "...", "value_pattern": "...", "group": 1, "lookahead_lines": 5}
+
+value colonne (FORM A): first_word | joined_text | numeric | unit_prefix
+
+modes fields (FORM B): first_line | join_lines (+ until_match/skip_if_match/max_lines)
+  | nth_regex (n 0-based sui token che matchano pattern, alto->basso)
+  | nth_line_regex
+"""
+
+SCHEMA_NATIVE = _SCHEMA_CORE + """
+=== CONTESTO: PDF NATIVO (testo digitale, coordinate AFFIDABILI) ===
+Obiettivo principale: un TEMPLATE RIUSABILE e preciso per documenti futuri
+dello stesso layout. I "dati" servono a validare il template.
+
+Priorita':
+1. signature UNIVOCHE (ragione sociale, codici modulo, diciture fisse). NO generiche.
+2. Calibra x_min/x_max sulle coordinate REALI @xNNN delle celle articolo, non solo header.
+3. Preferisci layout "rows" se ogni articolo e' una riga orizzontale.
+4. Usa side_by_side_items SOLO se e' evidente (N valori ripetuti stessa Y).
+5. Ogni riga articolo deve avere i campi presenti nel documento: tipicamente
+   codice_articolo e/o descrizione, quantita, prezzo se esistono. Non omettere
+   colonne utili solo per semplificare.
+6. row_detect_pattern deve matchare l'INTERA riga (re.match), es. "^\\\\d{5,}\\\\s".
+7. start_after_contains: 1-3 marker stabili PRIMA della prima riga articolo.
+8. Nei documenti legacy i numeri sono spesso right-aligned: x0 del valore puo'
+   essere PRIMA dell'etichetta colonna — usa le x delle parole valore.
+
+Rispondi SOLO con JSON valido:
+{
+  "template": { ... },
   "dati": {
     "numero_ordine": "...", "data": "...", "partita_iva_cliente": "...",
-    "righe": [ {..un oggetto per ogni riga articolo, con gli stessi nomi di campo delle colonne del template..} ]
+    "righe": [ { ... un oggetto per ogni articolo, stessi nomi campi del template ... } ]
   }
 }
 """
+
+SCHEMA_OCR = _SCHEMA_CORE + """
+=== CONTESTO: LAYOUT DA OCR (foto o PDF scansionato / PDF sola immagine) ===
+Il testo e' IMPERFETTO: parole spezzate, Y non allineate, caratteri errati,
+marker header su righe diverse. Le coordinate @x/@y restano la guida migliore.
+
+Obiettivo principale: DATI CORRETTI PER QUESTO DOCUMENTO.
+- Conservativo sui VALORI: se una cella non e' leggibile usa "N/A" — NON inventare
+  (niente zeri o prezzi finti).
+- Completo sullo SCHEMA della tabella: vedi sotto (header = contratto campi).
+
+--------------------------------------------------------------------
+HEADER TABELLA = CONTRATTO DEI CAMPI (obbligatorio se c'e' una griglia)
+--------------------------------------------------------------------
+Nella zona tabellare c'e' quasi sempre una RIGA DI INTESTAZIONE COLONNE
+(es. etichette tipo No. / Description / Quantity / Unit / Unit Price / Amount,
+oppure equivalenti IT/DE spezzate dall'OCR su 1-3 righe Y vicine).
+
+Quell'intestazione NON e' decorativa: DEFINISCE lo schema della tabella
+per QUESTO documento (e per altri fogli dello stesso layout):
+  N etichette header  =>  N campi su OGNI riga articolo.
+
+--------------------------------------------------------------------
+CONTEGGIO COLONNE DINAMICO (OBBLIGATORIO)
+--------------------------------------------------------------------
+Il numero di colonne NON e' fisso e NON va assunto a priori.
+Devi SCOPRIRLO dall'immagine/OCR di QUESTO documento:
+
+1. CONTA le etichette REALI dell'header tabella (sinistra -> destra).
+   Quel conteggio e' N. N puo' essere 3, 5, 9, ... qualsiasi.
+2. NOME di ogni chiave = nome colonna header, normalizzato in snake_case.
+   Usa SOLO le etichette presenti. NON inventare colonne. NON fondere due
+   etichette in una. NON togliere colonne "scomode" (testo, date, codici).
+3. table.columns (layout "rows") OPPURE table.fields (side_by_side) deve avere
+   ESATTAMENTE N elementi, stesso ordine visuale dell'header.
+4. Ogni oggetto in dati.righe deve avere ESATTAMENTE quelle N chiavi,
+   STESSI nomi di columns[].name / fields[].name, stesso ordine logico.
+5. Cella vuota o illeggibile -> valore "N/A". La chiave resta SEMPRE presente.
+6. table_header_detected = lista delle N etichette (come lette / normalizzate)
+   e deve combaciare 1:1 con columns[].name (o fields[].name) e con le chiavi
+   di ogni riga in dati.righe.
+
+Esempio mentale (N=4, nomi inventati solo per illustrare la forma):
+  header letto: ["Pos", "Descrizione", "Qta", "Importo"]
+  => columns: 4 campi (pos, descrizione, qta, importo)
+  => ogni riga: {"pos":"...", "descrizione":"...", "qta":"...", "importo":"..."}
+  Se Qta illeggibile: "qta":"N/A" (chiave presente).
+
+Procedura OBBLIGATORIA prima di estrarre le righe:
+1. HEADER DISCOVERY: individua il cluster di etichette colonna (anche se OCR
+   le spezza su piu' righe Y: ricomponile ordinate per X). CONTA N.
+2. SCHEMA LOCK: elenca le N colonne nell'ordine visuale (sinistra->destra).
+   Normalizza i nomi in snake_case stabili (es. Description->descrizione,
+   Unit Price->prezzo_unitario, Amount->totale_riga, No.->numero_riga).
+   Esempio di mapping (USA le etichette REALI del documento, non questo elenco fisso):
+   No.|Pos -> numero_riga; Description|Descrizione -> descrizione;
+   Performance Date|Data -> data_prestazione; Quantity|Q.ta -> quantita;
+   Unit|UM -> unita_misura; Unit Price|Prezzo -> prezzo_unitario;
+   Disc.|Sconto -> sconto; VAT|IVA -> iva; Amount|Importo -> totale_riga.
+3. GEOMETRY: per ogni colonna header calibra x_min/x_max sulle parole DEI VALORI
+   sotto quella colonna (non solo sulla x dell'etichetta; attenzione al right-align).
+4. ROW PARSE: ogni riga articolo deve avere LE STESSE N chiavi dello schema header.
+   Chiave senza valore leggibile -> "N/A", NON omettere la chiave.
+5. EMIT: in table.columns (layout rows) oppure table.fields, ESATTAMENTE N campi
+   = N colonne header. Vietato ridurre la tabella a sole colonne numeriche se
+   l'header include anche Description/No./Date/ecc. Vietato aggiungere campi
+   assenti dall'header.
+
+start_after_contains: 1-3 token STABILI presi dall'header (es. "Description",
+"Quantity"). Il motore li accumula anche su righe OCR diverse.
+
+end_markers: SOLO marker SOTTO la griglia (totali documento, pagamento, banca).
+MAI usare come end_marker le etichette dell'header (Amount, Quantity, Total come
+titolo colonna, ecc.).
+
+--------------------------------------------------------------------
+LAYOUT rows vs side_by_side_items
+--------------------------------------------------------------------
+- Se c'e' un header multi-colonna classico (Description + Quantity + Price + ...
+  in sequenza orizzontale) => layout "rows": una riga Y (o blocco riga) = un articolo.
+  NON interpretare le colonne di UNA riga tabella come N articoli affiancati.
+- side_by_side_items SOLO se sulla stessa Y si ripetono N volte lo STESSO tipo di
+  valore a X diverse SENZA un header multi-campo classico (es. tre "NR" / tre qty
+  di tre prodotti affiancati verticalmente).
+
+--------------------------------------------------------------------
+Altre priorita'
+--------------------------------------------------------------------
+1. Conta gli ARTICOLI REALI (righe dati sotto l'header), non le colonne header.
+2. signature: stringhe ROBUSTE (ragione sociale, IBAN/BIC lunghi, P.IVA). Evita
+   pezzi OCR fragili di una sola parola.
+3. Calibra columns / item_x_bands sulle @x REALI OCR.
+4. In "dati"."righe": un oggetto per articolo, chiavi = schema header completo.
+5. Se l'OCR e' confuso sui valori, genera comunque schema header completo + dati
+   con "N/A" dove serve. Non sacrificare colonne header per "semplificare".
+
+Rispondi SOLO con JSON valido:
+{
+  "template": { ... },
+  "table_header_detected": ["etichetta1", "etichetta2", "... come lette nell'header"],
+  "dati": {
+    "numero_ordine": "...", "data": "...", "partita_iva_cliente": "...",
+    "righe": [ { ... stesse chiavi dello schema header, una riga per articolo ... } ]
+  }
+}
+(table_header_detected e' obbligatorio se hai trovato un header tabellare;
+ deve allinearsi ai name di columns/fields del template.)
+"""
+
+
+# Retrocompatibilita' nome usato in messaggi d'errore
+SCHEMA_EXPLANATION = SCHEMA_NATIVE
 
 
 def _load_dotenv(env_path):
@@ -128,9 +260,26 @@ def _extract_json_object(text):
     return json.loads(candidate)
 
 
-def bootstrap_new_template(lines, full_text):
-    """Chiama il modello via OpenRouter per dedurre un nuovo template dal
-    layout del documento. Ritorna (dati_estratti, template_dict)."""
+def _normalize_mode(mode):
+    m = (mode or "native").strip().lower()
+    if m in ("native", "pdf", "text"):
+        return "native"
+    if m in ("ocr", "image", "scan", "ocr_pdf", "ocr_image"):
+        return "ocr"
+    raise ValueError(f"mode AI sconosciuto: {mode!r} (usa 'native' o 'ocr')")
+
+
+def bootstrap_new_template(lines, full_text, mode="native"):
+    """
+    Chiama OpenRouter per dedurre template + dati.
+
+    mode:
+      - "native": PDF testo digitale (prompt SCHEMA_NATIVE)
+      - "ocr": foto / PDF scansionato (prompt SCHEMA_OCR)
+
+    Ritorna (dati_estratti, template_dict).
+    """
+    mode = _normalize_mode(mode)
     _load_dotenv(Path(__file__).parent / ".env")
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
@@ -140,23 +289,31 @@ def bootstrap_new_template(lines, full_text):
             "trovato accanto allo script).\n"
             "Imposta la tua API key OpenRouter per abilitare il bootstrap automatico di nuovi "
             "formati, oppure crea manualmente un template in templates/ seguendo lo schema "
-            "descritto in ai_bootstrap.py::SCHEMA_EXPLANATION."
+            "descritto in ai_bootstrap.py (SCHEMA_NATIVE / SCHEMA_OCR)."
         )
 
     model = os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL)
     layout_dump = _build_layout_dump(lines, full_text)
+    schema = SCHEMA_NATIVE if mode == "native" else SCHEMA_OCR
 
-    user_prompt = (
-        "Il documento seguente e' un ordine cliente (da PDF nativo oppure da OCR di foto) "
-        "il cui layout non corrisponde a nessun template gia' noto. Analizza testo e "
-        "coordinate e genera il template JSON richiesto, insieme ai dati estratti per "
-        "QUESTO documento.\n"
-        "Se il testo deriva da OCR puo' contenere errori di lettura: usa le coordinate "
-        "reali delle parole per capire colonne e righe, e scegli signature/marker robusti.\n\n"
-        + SCHEMA_EXPLANATION
-        + "\n\n"
-        + layout_dump
-    )
+    if mode == "native":
+        intro = (
+            "Il documento seguente e' un ORDINE/DOCUMENTO da PDF NATIVO (testo digitale). "
+            "Il layout non corrisponde a nessun template noto. Analizza testo e coordinate "
+            "AFFIDABILI e genera un template RIUSABILE piu' i dati di questo documento.\n\n"
+        )
+    else:
+        intro = (
+            "Il documento seguente deriva da OCR (foto oppure PDF scansionato/sola immagine). "
+            "Il testo puo' essere rumoroso. Prima individua l'INTESTAZIONE della tabella "
+            "(etichette colonna): quello e' lo schema campi. Poi estrai i dati di QUESTO "
+            "documento allineati a quello schema. Conservativo sui valori (N/A se illeggibili, "
+            "non inventare); completo sulle colonne header. Non fondere colonne di una riga "
+            "tabella in un unico articolo.\n\n"
+        )
+
+
+    user_prompt = intro + schema + "\n\n" + layout_dump
 
     response = requests.post(
         OPENROUTER_URL,
@@ -213,6 +370,7 @@ def save_template(template, templates_dir):
             path = original_path
             break
 
+    Path(templates_dir).mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(template, f, indent=2, ensure_ascii=False)
 

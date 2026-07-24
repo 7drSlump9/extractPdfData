@@ -135,9 +135,141 @@ def extract_column_value(tokens, value_type):
     return " ".join(tokens) if tokens else "N/A"
 
 
+def _table_region_lines(lines, start_markers, end_markers):
+    """Filtra le righe alla sola zona tabella (dopo start markers, prima di end)."""
+    start_markers_upper = [m.upper() for m in (start_markers or [])]
+    end_markers_upper = [m.upper() for m in (end_markers or [])]
+    seen = set()
+    in_table = not bool(start_markers_upper)
+    out = []
+    for top, row_words in lines:
+        text = line_text(row_words)
+        text_upper = text.upper()
+        if not in_table:
+            for marker in start_markers_upper:
+                if marker in text_upper:
+                    seen.add(marker)
+            if len(seen) >= len(start_markers_upper):
+                in_table = True
+            continue
+        if end_markers_upper and any(m in text_upper for m in end_markers_upper):
+            break
+        out.append((top, row_words))
+    return out
+
+
+def _extract_side_field(band_lines, field):
+    """
+    Estrae un campo da una striscia verticale (lista di (top, [token,...])).
+
+    mode:
+      - join_lines: unisce righe testo (filtri opzionali)
+      - first_line: prima riga utile
+      - nth_regex: n-esimo token (top->bottom) che matcha pattern (n 0-based)
+      - nth_line_regex: n-esima riga intera che matcha pattern
+    """
+    mode = field.get("mode", "join_lines")
+    skip_re = re.compile(field["skip_if_match"]) if field.get("skip_if_match") else None
+    until_re = re.compile(field["until_match"]) if field.get("until_match") else None
+    include_re = re.compile(field["line_match"]) if field.get("line_match") else None
+
+    line_texts = []
+    flat_tokens = []
+    for _top, toks in band_lines:
+        joined = " ".join(toks).strip()
+        if not joined:
+            continue
+        # skip/until filtrano solo i mode basati su righe testuali; nth_regex
+        # deve vedere tutti i token numerici della banda.
+        if mode in ("join_lines", "first_line", "nth_line_regex"):
+            if skip_re and skip_re.search(joined):
+                continue
+            if until_re and until_re.search(joined) and mode in ("join_lines", "first_line"):
+                break
+            if include_re and not include_re.search(joined):
+                continue
+        line_texts.append(joined)
+        flat_tokens.extend(toks)
+
+
+    if mode == "first_line":
+        return line_texts[0] if line_texts else "N/A"
+
+    if mode == "join_lines":
+        max_lines = field.get("max_lines")
+        parts = line_texts[:max_lines] if max_lines else line_texts
+        return " ".join(parts) if parts else "N/A"
+
+    if mode == "nth_regex":
+        pattern = re.compile(field.get("pattern", r"^[\d\.,]+$"))
+        n = int(field.get("n", 0))
+        matches = [t for t in flat_tokens if pattern.match(t)]
+        if 0 <= n < len(matches):
+            return matches[n]
+        return "N/A"
+
+    if mode == "nth_line_regex":
+        pattern = re.compile(field.get("pattern", r".*"))
+        n = int(field.get("n", 0))
+        matches = [t for t in line_texts if pattern.search(t)]
+        if 0 <= n < len(matches):
+            return matches[n]
+        return "N/A"
+
+    return " ".join(line_texts) if line_texts else "N/A"
+
+
+def extract_table_side_by_side(table_config, lines):
+    """
+    Layout a articoli affiancati in verticale (N colonne = N prodotti).
+    Ogni item_x_bands[i] e' una striscia X; i fields si estraggono scorrendo
+    le parole di quella striscia dall'alto verso il basso.
+    """
+    bands = table_config.get("item_x_bands") or []
+    fields = table_config.get("fields") or []
+    if not bands or not fields:
+        return []
+
+    region = _table_region_lines(
+        lines,
+        table_config.get("start_after_contains", []),
+        table_config.get("end_markers", []),
+    )
+
+    rows = []
+    for band in bands:
+        x_min = band.get("x_min", 0)
+        x_max = band.get("x_max", 99999)
+        band_lines = []
+        for top, row_words in region:
+            toks = [
+                w["text"]
+                for w in row_words
+                if x_min <= round(w["x0"]) < x_max
+            ]
+            if toks:
+                band_lines.append((top, toks))
+
+        row = {}
+        useful = 0
+        for field in fields:
+            val = _extract_side_field(band_lines, field)
+            row[field["name"]] = val
+            if val and str(val).strip() and str(val).strip().upper() not in ("N/A", "NA", "-", ""):
+                useful += 1
+        # scarta bande vuote / solo rumore
+        if useful >= 1:
+            rows.append(row)
+    return rows
+
+
 def extract_table(table_config, lines):
     if not table_config:
         return []
+
+    layout = (table_config.get("layout") or "rows").lower()
+    if layout in ("side_by_side_items", "side_by_side", "columns_as_items"):
+        return extract_table_side_by_side(table_config, lines)
 
     columns = table_config['columns']
     row_pattern = re.compile(table_config['row_detect_pattern'])
@@ -215,7 +347,6 @@ def extract_table(table_config, lines):
     return rows
 
 
-
 # ---------------------------------------------------------------------------
 # Applicazione completa di un template a un documento
 # ---------------------------------------------------------------------------
@@ -225,3 +356,4 @@ def apply_template(template, lines, full_text):
         result[field_name] = extract_header_field(cfg, full_text, lines)
     result['righe'] = extract_table(template.get('table'), lines)
     return result
+
