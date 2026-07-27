@@ -12,8 +12,8 @@ OCR: prompt AI "ocr", template salvato solo se quality-gate STRETTO
 (altrimenti dati AI one-shot senza inquinare templates/).
 
 Uso:
-    python main.py -customer "Nome Cliente" -eo <path_pdf>
-    python main.py -customer "Nome Cliente" -eoi <img1> [img2 ...]
+    python main.py -customer "Nome Cliente" [-templateName "NOME"] [-outputTemplatePath "PATH"] [-append] -eo <path_pdf>
+    python main.py -customer "Nome Cliente" [-templateName "NOME"] [-outputTemplatePath "PATH"] [-append] -eoi <img1> [img2 ...]
 """
 
 import json
@@ -208,7 +208,7 @@ def _match_or_none(lines, full_text, customer_name="UNKNOWN"):
     return None
 
 
-def _bootstrap_ai(lines, full_text, mode, customer_name="UNKNOWN"):
+def _bootstrap_ai(lines, full_text, mode, customer_name="UNKNOWN", template_name=None):
     if not _has_usable_text(full_text):
         raise RuntimeError(
             "Impossibile chiamare l'AI: nessun testo/layout disponibile dal documento. "
@@ -221,10 +221,13 @@ def _bootstrap_ai(lines, full_text, mode, customer_name="UNKNOWN"):
     from ai_bootstrap import bootstrap_new_template, save_template
 
     dati_ai, nuovo_template = bootstrap_new_template(lines, full_text, mode=mode)
+    if template_name:
+        nuovo_template["name"] = template_name
+        print(f"Nome template forzato a: {template_name}")
     return dati_ai, nuovo_template, save_template, customer_name
 
 
-def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN"):
+def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", template_name=None):
     """
     PDF testo digitale: prompt native, template in templates/ (gate leggero).
     Ritorna dati (con meta).
@@ -243,7 +246,7 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN"):
         )
 
     dati_ai, nuovo_template, save_template, customer_name = _bootstrap_ai(
-        lines, full_text, mode="native", customer_name=customer_name
+        lines, full_text, mode="native", customer_name=customer_name, template_name=template_name
     )
     saved_path = save_template(nuovo_template, TEMPLATES_DIR)
     db.save_template(nuovo_template, customer_name)
@@ -295,7 +298,7 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN"):
     )
 
 
-def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN"):
+def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", template_name=None):
     """
     OCR (foto o PDF scansionato): prompt ocr.
     Template salvato in draft_ocr/ SOLO se gate stretto; altrimenti ai_oneshot.
@@ -314,7 +317,7 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN"):
         )
 
     dati_ai, nuovo_template, save_template, customer_name = _bootstrap_ai(
-        lines, full_text, mode="ocr", customer_name=customer_name
+        lines, full_text, mode="ocr", customer_name=customer_name, template_name=template_name
     )
     dati_motore = apply_template(nuovo_template, lines, full_text)
 
@@ -384,7 +387,7 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN"):
     )
 
 
-def estrai_ordine(pdf_path, customer_name="UNKNOWN"):
+def estrai_ordine(pdf_path, customer_name="UNKNOWN", template_name=None):
     """
     -eo: native se c'e' testo; altrimenti OCR PDF (source=ocr_pdf).
     Ritorna solo il dict dati (con meta).
@@ -393,7 +396,7 @@ def estrai_ordine(pdf_path, customer_name="UNKNOWN"):
         lines, full_text = _collect_all_pages(pdf)
 
         if _has_usable_text(full_text):
-            return _estrai_native(lines, full_text, source="native", customer_name=customer_name)
+            return _estrai_native(lines, full_text, source="native", customer_name=customer_name, template_name=template_name)
 
         print(
             "PDF senza testo nativo estraibile (probabile scansione o sola immagine). "
@@ -415,10 +418,10 @@ def estrai_ordine(pdf_path, customer_name="UNKNOWN"):
                 "(tesseract --version) con lingue ita/eng."
             )
 
-        return _estrai_ocr(lines, full_text, source="ocr_pdf", customer_name=customer_name)
+        return _estrai_ocr(lines, full_text, source="ocr_pdf", customer_name=customer_name, template_name=template_name)
 
 
-def estrai_ordine_immagini(image_paths, customer_name="UNKNOWN"):
+def estrai_ordine_immagini(image_paths, customer_name="UNKNOWN", template_name=None):
     """-eoi: OCR multipagina, source=ocr_image."""
     from image_ocr import collect_lines_from_images, validate_image_paths
 
@@ -431,7 +434,7 @@ def estrai_ordine_immagini(image_paths, customer_name="UNKNOWN"):
             "Verifica qualita' foto e che Tesseract sia installato "
             "(tesseract --version) con lingue ita/eng."
         )
-    return _estrai_ocr(lines, full_text, source="ocr_image", customer_name=customer_name)
+    return _estrai_ocr(lines, full_text, source="ocr_image", customer_name=customer_name, template_name=template_name)
 
 
 def stampa_risultati(dati):
@@ -466,20 +469,41 @@ def stampa_risultati(dati):
 
 def _print_usage():
     print("Uso:")
-    print("  python main.py -customer \"Nome Cliente\" -eo <path_pdf>")
-    print("  python main.py -customer \"Nome Cliente\" -eoi <img1> [img2 ...]")
+    print("  python main.py -customer \"Nome Cliente\" [-templateName \"NOME\"] [-outputTemplatePath \"PATH\"] [-append] -eo <path_pdf>")
+    print("  python main.py -customer \"Nome Cliente\" [-templateName \"NOME\"] [-outputTemplatePath \"PATH\"] [-append] -eoi <img1> [img2 ...]")
     print()
-    print("Opzioni:")
-    print("  -customer  Nome cliente (obbligatorio, salvato in JSON e DB template)")
-    print("  -eo        PDF: testo nativo (template riusabile) oppure OCR se scansione")
-    print("  -eoi       Immagini/foto (OCR, prompt dedicato, template solo se gate ok)")
+    print("Opzioni (ordine libero):")
+    print("  -customer           Nome cliente (obbligatorio, salvato in JSON e DB template)")
+    print("  -templateName       Nome template (opzionale, forza il nome del template generato dall'AI)")
+    print("  -outputTemplatePath Path output JSON (opzionale, default: output/<file>_estratto.json)")
+    print("  -append             Appende al JSON esistente invece di sovrascrivere (default: false)")
+    print("  -eo                 PDF: testo nativo (template riusabile) oppure OCR se scansione")
+    print("  -eoi                Immagini/foto (OCR, prompt dedicato, template solo se gate ok)")
 
 
-def _save_json(dati, stem_source):
-    output_dir = Path(__file__).parent / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    json_output = output_dir / (Path(stem_source).stem + "_estratto.json")
+def _save_json(dati, stem_source, output_path=None, append=False):
+    if output_path:
+        json_output = Path(output_path)
+        json_output.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output_dir = Path(__file__).parent / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        json_output = output_dir / (Path(stem_source).stem + "_estratto.json")
+
+    if append and json_output.exists():
+        try:
+            with open(json_output, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if isinstance(existing, list):
+                existing.append(dati)
+                dati = existing
+            else:
+                dati = [existing, dati]
+        except (json.JSONDecodeError, Exception):
+            dati = [dati]
+    elif append:
+        dati = [dati]
+
     with open(json_output, "w", encoding="utf-8") as f:
         json.dump(dati, f, indent=2, ensure_ascii=False)
     print(f"\n\nJSON salvato in: {json_output}")
@@ -501,11 +525,14 @@ if __name__ == "__main__":
         _print_usage()
         sys.exit(1)
 
-    # Parsing: -customer "Nome" -eo <pdf>  oppure  -customer "Nome" -eoi <img1> [img2...]
+    # Parsing: tutti i flag in qualsiasi ordine, comando (-eo/-eoi) e relativi args
     args = sys.argv[1:]
     customer_name = None
+    template_name = None
+    output_path = None
+    append_mode = False
     comando = None
-    comando_args = []
+    comando_idx = -1
 
     i = 0
     while i < len(args):
@@ -516,14 +543,32 @@ if __name__ == "__main__":
                 sys.exit(1)
             customer_name = args[i + 1]
             i += 2
+        elif args[i] == "-templateName":
+            if i + 1 >= len(args):
+                print("Errore: -templateName richiede un valore")
+                _print_usage()
+                sys.exit(1)
+            template_name = args[i + 1]
+            i += 2
+        elif args[i] == "-outputTemplatePath":
+            if i + 1 >= len(args):
+                print("Errore: -outputTemplatePath richiede un valore")
+                _print_usage()
+                sys.exit(1)
+            output_path = args[i + 1]
+            i += 2
+        elif args[i] == "-append":
+            append_mode = True
+            i += 1
         elif args[i] in ("-eo", "-eoi"):
             comando = args[i]
-            comando_args = args[i + 1:]
-            break
+            comando_idx = i
+            i += 1
         else:
-            print(f"Errore: parametro sconosciuto '{args[i]}'")
-            _print_usage()
-            sys.exit(1)
+            i += 1
+
+    # Raccogli args dopo il comando
+    comando_args = args[comando_idx + 1:] if comando_idx >= 0 else []
 
     if not customer_name:
         print("Errore: -customer obbligatorio")
@@ -542,7 +587,7 @@ if __name__ == "__main__":
 
         print(f"Elaborazione: {pdf_file}  (customer: {customer_name})")
         try:
-            dati = estrai_ordine(pdf_file, customer_name=customer_name)
+            dati = estrai_ordine(pdf_file, customer_name=customer_name, template_name=template_name)
         except (FileNotFoundError, ValueError, RuntimeError) as e:
             print(f"Errore: {e}")
             db.log_event(
@@ -556,7 +601,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         stampa_risultati(dati)
-        _save_json(dati, pdf_file)
+        _save_json(dati, pdf_file, output_path=output_path, append=append_mode)
         db.log_event(
             action="extraction",
             document_name=pdf_file,
@@ -573,7 +618,7 @@ if __name__ == "__main__":
 
         print(f"Elaborazione immagini: {', '.join(comando_args)}  (customer: {customer_name})")
         try:
-            dati = estrai_ordine_immagini(comando_args, customer_name=customer_name)
+            dati = estrai_ordine_immagini(comando_args, customer_name=customer_name, template_name=template_name)
         except (FileNotFoundError, ValueError, RuntimeError) as e:
             print(f"Errore: {e}")
             db.log_event(
@@ -587,7 +632,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         stampa_risultati(dati)
-        _save_json(dati, comando_args[0])
+        _save_json(dati, comando_args[0], output_path=output_path, append=append_mode)
         db.log_event(
             action="extraction",
             document_name=comando_args[0],
