@@ -9,3 +9,5 @@ templates/consorzio_nazionale_dettaglianti.json
 input/
 output/
 templates/TEMPLATE_APPROVED
+web/dist
+web/node_modules
