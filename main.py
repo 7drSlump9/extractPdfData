@@ -194,12 +194,18 @@ def _pack_ai_dati(dati_ai, template):
     return dati_out
 
 
-def _match_or_none(lines, full_text):
-    templates = load_templates(TEMPLATES_DIR)
-    template = match_template(templates, full_text)
+def _match_or_none(lines, full_text, customer_name="UNKNOWN"):
+    # Prima cerca nel DB (solo template del customer)
+    db_templates = db.get_all_templates(customer_name=customer_name)
+    template = match_template(db_templates, full_text)
     if template:
         return apply_template(template, lines, full_text), template
-    return None, None
+    # Fallback su disco
+    disk_templates = load_templates(TEMPLATES_DIR)
+    template = match_template(disk_templates, full_text)
+    if template:
+        return apply_template(template, lines, full_text), template
+    return None
 
 
 def _bootstrap_ai(lines, full_text, mode, customer_name="UNKNOWN"):
@@ -223,7 +229,7 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN"):
     PDF testo digitale: prompt native, template in templates/ (gate leggero).
     Ritorna dati (con meta).
     """
-    matched = _match_or_none(lines, full_text)
+    matched = _match_or_none(lines, full_text, customer_name=customer_name)
     if matched is not None:
         dati, template = matched
         db.save_template(template, customer_name)
@@ -294,7 +300,7 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN"):
     OCR (foto o PDF scansionato): prompt ocr.
     Template salvato in draft_ocr/ SOLO se gate stretto; altrimenti ai_oneshot.
     """
-    matched = _match_or_none(lines, full_text)
+    matched = _match_or_none(lines, full_text, customer_name=customer_name)
     if matched is not None:
         dati, template = matched
         db.save_template(template, customer_name)

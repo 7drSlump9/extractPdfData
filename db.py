@@ -7,7 +7,7 @@ Tables: config, template, logs.
 import json
 from datetime import datetime
 from pathlib import Path
-from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -22,8 +22,9 @@ class Config(Base):
 
 class Template(Base):
     __tablename__ = 'template'
+    __table_args__ = (UniqueConstraint('name', 'customer_name'),)
     id = Column(Integer, primary_key=True)
-    name = Column(String(100), unique=True, nullable=False)
+    name = Column(String(100), nullable=False)
     customer_name = Column(String(100), nullable=False, default="UNKNOWN")
     description = Column(Text)
     json_data = Column(Text, nullable=False)  # full JSON as text (must match original file content)
@@ -69,12 +70,11 @@ class Database:
             json_str = json.dumps(template_dict, indent=2, ensure_ascii=False)
             sig = json.dumps(template_dict.get("signature", []))
 
-            existing = session.query(Template).filter_by(name=name).first()
+            existing = session.query(Template).filter_by(name=name, customer_name=customer_name).first()
             if existing:
                 existing.json_data = json_str
                 existing.signature = sig
                 existing.description = template_dict.get("description", "")
-                existing.customer_name = customer_name
                 existing.updated_at = datetime.utcnow()
             else:
                 new_tpl = Template(
@@ -116,13 +116,28 @@ class Database:
         finally:
             session.close()
     
-    def get_template_by_name(self, name: str) -> dict | None:
+    def get_template_by_name(self, name: str, customer_name: str = None) -> dict | None:
         session = self.get_session()
         try:
-            tpl = session.query(Template).filter_by(name=name, is_active=True).first()
+            q = session.query(Template).filter_by(name=name, is_active=True)
+            if customer_name:
+                q = q.filter_by(customer_name=customer_name)
+            tpl = q.first()
             if tpl and tpl.json_data:
                 return json.loads(tpl.json_data)
             return None
+        finally:
+            session.close()
+
+    def get_all_templates(self, customer_name: str = None) -> list[dict]:
+        """Ritorna tutti i template attivi dal DB come lista di dict, filtrati per customer."""
+        session = self.get_session()
+        try:
+            q = session.query(Template).filter_by(is_active=True)
+            if customer_name:
+                q = q.filter_by(customer_name=customer_name)
+            tpls = q.all()
+            return [json.loads(t.json_data) for t in tpls if t.json_data]
         finally:
             session.close()
 
