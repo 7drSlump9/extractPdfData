@@ -2,3 +2,4 @@ pdfplumber
 requests
 Pillow
 pytesseract
+sqlalchemy
