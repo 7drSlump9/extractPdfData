@@ -22,12 +22,13 @@ class Config(Base):
 
 class Template(Base):
     __tablename__ = 'template'
-    __table_args__ = (UniqueConstraint('name', 'customer_name'),)
+    __table_args__ = (UniqueConstraint('name'),)
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
     customer_name = Column(String(100), nullable=False, default="UNKNOWN")
     description = Column(Text)
     json_data = Column(Text, nullable=False)  # full JSON as text (must match original file content)
+    json_data_old = Column(Text)  # previous version backup
     signature = Column(Text)  # comma separated or JSON
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -70,8 +71,9 @@ class Database:
             json_str = json.dumps(template_dict, indent=2, ensure_ascii=False)
             sig = json.dumps(template_dict.get("signature", []))
 
-            existing = session.query(Template).filter_by(name=name, customer_name=customer_name).first()
+            existing = session.query(Template).filter_by(name=name).first()
             if existing:
+                existing.json_data_old = existing.json_data
                 existing.json_data = json_str
                 existing.signature = sig
                 existing.description = template_dict.get("description", "")

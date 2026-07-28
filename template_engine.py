@@ -352,7 +352,11 @@ def extract_table(table_config, lines):
 # ---------------------------------------------------------------------------
 def apply_template(template, lines, full_text):
     result = {"formato": template.get('name', 'UNKNOWN')}
-    for field_name, cfg in template.get('header_fields', {}).items():
+    # Retrocompatibilità: header.fields (nuovo) oppure header_fields (vecchio)
+    header_fields = template.get('header', {}).get('fields', None)
+    if header_fields is None:
+        header_fields = template.get('header_fields', {})
+    for field_name, cfg in header_fields.items():
         result[field_name] = extract_header_field(cfg, full_text, lines)
     result['righe'] = extract_table(template.get('table'), lines)
     return result

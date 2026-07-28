@@ -127,6 +127,51 @@ def api_delete_template(name):
 
 # ──────────────────────── PDF TEST ────────────────────────
 
+@app.route("/api/test-pdf", methods=["POST"])
+@login_required
+def api_test_pdf():
+    """
+    Testa un template direttamente su un PDF caricato.
+    Riceve multipart/form-data: file (PDF) + template (JSON string).
+    Usa pdfplumber per estrarre testo e applica il template.
+    """
+    if 'file' not in request.files:
+        return jsonify({"error": "File PDF richiesto"}), 400
+    file = request.files['file']
+    template_str = request.form.get('template', '')
+    if not template_str:
+        return jsonify({"error": "Parametro 'template' richiesto"}), 400
+
+    try:
+        template = json.loads(template_str)
+    except json.JSONDecodeError as e:
+        return jsonify({"error": f"Template JSON non valido: {e}"}), 400
+
+    try:
+        import pdfplumber
+        import io
+        pdf_bytes = file.read()
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            from template_engine import get_lines, line_text, apply_template
+            all_lines = []
+            y_offset = 0.0
+            text_parts = []
+            for page in pdf.pages:
+                page = page.dedupe_chars(tolerance=1)
+                page_lines = get_lines(page)
+                for top, row in page_lines:
+                    all_lines.append((top + y_offset, row))
+                text_parts.append("\n".join(line_text(row) for _, row in page_lines))
+                y_offset += float(page.height or 0) + 10.0
+            full_text = "\n".join(text_parts)
+
+        result = apply_template(template, all_lines, full_text)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ──────────────────────── PDF TEST (legacy) ────────────────────────
+
 @app.route("/api/test-template", methods=["POST"])
 @login_required
 def api_test_template():

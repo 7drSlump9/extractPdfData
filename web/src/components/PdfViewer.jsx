@@ -1,15 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import ZoneOverlay from './ZoneOverlay';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.9.155/pdf.worker.min.mjs';
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
-export default function PdfViewer({ file, template }) {
+export default function PdfViewer({ file, template, onTagDrop }) {
   const canvasRef = useRef(null);
   const pdfDocRef = useRef(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [numPages, setNumPages] = useState(0);
   const [scale, setScale] = useState(1.5);
+  const [yOffset, setYOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const renderIdRef = useRef(0);
 
@@ -69,13 +71,33 @@ export default function PdfViewer({ file, template }) {
         <button onClick={nextPage} disabled={currentPage >= numPages} style={{ background: currentPage >= numPages ? '#334155' : '#475569', color: '#fff', padding: '4px 10px', borderRadius: 4 }}>▶</button>
         <input type="range" min="0.5" max="3" step="0.1" value={scale} onChange={(e) => setScale(Number(e.target.value))} style={{ width: 80 }} />
         <span style={{ fontSize: 12, color: '#94a3b8' }}>{scale}x</span>
+        <span style={{ fontSize: 10, color: '#94a3b8', marginLeft: 8 }}>Y:</span>
+        <input type="number" value={yOffset} onChange={(e) => setYOffset(Number(e.target.value) || 0)} style={{ width: 50, fontSize: 11 }} />
       </div>
 
       {/* Canvas + overlay */}
-      <div style={{ position: 'relative', display: 'inline-block', borderRadius: 6, overflow: 'hidden', boxShadow: '0 4px 24px rgba(0,0,0,0.4)' }}>
+      <div
+        style={{ position: 'relative', display: 'inline-block', borderRadius: 6, overflow: 'visible', boxShadow: '0 4px 24px rgba(0,0,0,0.4)' }}
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (!onTagDrop) return;
+          const raw = e.dataTransfer.getData('application/tag-index');
+          if (raw === '') return;
+          const index = parseInt(raw, 10);
+          if (isNaN(index)) return;
+          const rect = canvasRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          const canvasX = e.clientX - rect.left;
+          const canvasY = e.clientY - rect.top;
+          const pdfX = canvasX / scale;
+          const pdfY = (canvasY - (yOffset * scale)) / scale;
+          onTagDrop(index, Math.round(pdfX), Math.round(pdfY));
+        }}
+      >
         {loading && <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 10px', borderRadius: 4, fontSize: 12, zIndex: 30 }}>Caricamento...</div>}
-        <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '100%' }} />
-        <ZoneOverlay template={template} scale={scale} />
+        <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '100%', position: 'relative', zIndex: 1 }} />
+        <ZoneOverlay template={template} scale={scale} yOffset={yOffset} />
       </div>
     </div>
   );

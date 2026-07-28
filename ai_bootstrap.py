@@ -36,13 +36,32 @@ Devi produrre un TEMPLATE in JSON con questa struttura:
   "name": "NOME_BREVE_MAIUSCOLO",
   "description": "descrizione libera del layout",
   "signature": ["stringa univoca 1", "stringa univoca 2"],
-  "header_fields": {
-    "numero_ordine": { <regola> },
-    "data": { <regola> },
-    "partita_iva_cliente": { <regola> }
+  "header": {
+    "y_min": 0,
+    "y_max": 200,
+    "fields": {
+      "numero_ordine": { <regola> },
+      "data": { <regola> },
+      "partita_iva_cliente": { <regola> }
+    }
   },
-  "table": { <FORM A rows OPPURE FORM B side_by_side_items> }
+  "table": {
+    "y_min": 200,
+    "y_max": 600,
+    <FORM A rows OPPURE FORM B side_by_side_items>
+  },
+  "footer": {
+    "y_min": 600,
+    "y_max": 800,
+    "fields": {}
+  }
 }
+
+IMPORTANTE: stima y_min/y_max per header, table e footer in base alle coordinate
+Y reali del documento (@yNNN). y_min/y_max di header = zona sopra la tabella.
+y_min/y_max di table = zona della griglia articoli. y_min/y_max di footer = zona
+sotto la tabella (totali, firme, note). Ogni field in header.fields puo' avere
+opzionalmente x_min/x_max/y_min/y_max per delimitare la zona di ricerca.
 
 FORM A - tabella classica (una riga orizzontale = un articolo), default:
 {
@@ -78,7 +97,7 @@ NON unire le colonne in un solo articolo.
   ]
 }
 
-Regole header_fields:
+Regole header.fields (ogni campo puo' avere x_min/x_max/y_min/y_max opzionali):
 - {"type": "regex_full_text", "pattern": "...(gruppo)...", "group": 1}
 - {"type": "regex_column_filtered", "pattern": "...", "x_min": 0, "x_max": 300, "group": 1}
 - {"type": "label_then_value_below", "label_pattern": "...", "value_pattern": "...", "group": 1, "lookahead_lines": 5}

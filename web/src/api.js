@@ -38,3 +38,13 @@ export async function testTemplate({ template, lines, fullText }) {
   const { data } = await api.post('/test-template', { template, lines, full_text: fullText });
   return data;
 }
+
+export async function testPdfTemplate(pdfFile, template) {
+  const formData = new FormData();
+  formData.append('file', pdfFile);
+  formData.append('template', JSON.stringify(template));
+  const { data } = await api.post('/test-pdf', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data;
+}
