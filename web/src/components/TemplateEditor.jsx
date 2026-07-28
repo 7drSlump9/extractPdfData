@@ -275,10 +275,20 @@ export default function TemplateEditor({ username, onLogout }) {
   };
 
   const handleTagDrop = (index, pdfX, pdfY) => {
-    updHdr(index, 'x_min', pdfX);
-    updHdr(index, 'y_min', pdfY);
-    updHdr(index, 'x_max', pdfX + 100);
-    updHdr(index, 'y_max', pdfY + 10);
+    const fields = template?.header?.fields;
+    if (!fields || index >= fields.length) return;
+    const f = fields[index];
+    const w = Math.max((f.x_max ?? 0) - (f.x_min ?? 0), 0);
+    const h = Math.max((f.y_max ?? 0) - (f.y_min ?? 0), 0);
+    const useW = w > 0 ? w : 100;
+    const useH = h > 0 ? h : 20;
+    const newFields = [...fields];
+    newFields[index] = {
+      ...newFields[index],
+      x_min: pdfX, y_min: pdfY,
+      x_max: pdfX + useW, y_max: pdfY + useH,
+    };
+    setTemplate({ ...template, header: { ...template.header, fields: newFields } });
   };
 
   // --- Table helpers ---
@@ -430,6 +440,19 @@ export default function TemplateEditor({ username, onLogout }) {
                       onDragStart={(e) => {
                         e.dataTransfer.setData('application/tag-index', String(i));
                         e.dataTransfer.effectAllowed = 'move';
+                        const w = Math.max((f.x_max ?? 0) - (f.x_min ?? 0), 20);
+                        const h = Math.max((f.y_max ?? 0) - (f.y_min ?? 0), 10);
+                        const ghost = document.createElement('canvas');
+                        const s = Math.min(100 / w, 1);
+                        ghost.width = Math.max(w * s, 20);
+                        ghost.height = Math.max(h * s, 10);
+                        const ctx = ghost.getContext('2d');
+                        ctx.fillStyle = 'rgba(59,130,246,0.4)';
+                        ctx.fillRect(0, 0, ghost.width, ghost.height);
+                        ctx.strokeStyle = '#3b82f6';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(0, 0, ghost.width, ghost.height);
+                        e.dataTransfer.setDragImage(ghost, 0, 0);
                       }}
                       style={{ marginBottom: 4, background: '#1e293b', borderRadius: 6, overflow: 'hidden' }}
                     >

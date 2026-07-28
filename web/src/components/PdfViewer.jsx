@@ -59,6 +59,24 @@ export default function PdfViewer({ file, template, onTagDrop }) {
     }
   };
 
+  const [canvasScaleX, setCanvasScaleX] = useState(1);
+  const [canvasScaleY, setCanvasScaleY] = useState(1);
+
+  // Aggiorna il rapporto di scala CSS quando il canvas viene ridimensionato
+  useEffect(() => {
+    const observer = new ResizeObserver(() => {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        setCanvasScaleX(rect.width > 0 ? canvas.width / rect.width : 1);
+        setCanvasScaleY(rect.height > 0 ? canvas.height / rect.height : 1);
+      }
+    });
+    const canvas = canvasRef.current;
+    if (canvas) observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
+
   const prevPage = () => setCurrentPage(p => Math.max(1, p - 1));
   const nextPage = () => setCurrentPage(p => Math.min(numPages, p + 1));
 
@@ -78,26 +96,32 @@ export default function PdfViewer({ file, template, onTagDrop }) {
       {/* Canvas + overlay */}
       <div
         style={{ position: 'relative', display: 'inline-block', borderRadius: 6, overflow: 'visible', boxShadow: '0 4px 24px rgba(0,0,0,0.4)' }}
-        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
-        onDrop={(e) => {
-          e.preventDefault();
-          if (!onTagDrop) return;
-          const raw = e.dataTransfer.getData('application/tag-index');
-          if (raw === '') return;
-          const index = parseInt(raw, 10);
-          if (isNaN(index)) return;
-          const rect = canvasRef.current?.getBoundingClientRect();
-          if (!rect) return;
-          const canvasX = e.clientX - rect.left;
-          const canvasY = e.clientY - rect.top;
-          const pdfX = canvasX / scale;
-          const pdfY = (canvasY - (yOffset * scale)) / scale;
-          onTagDrop(index, Math.round(pdfX), Math.round(pdfY));
-        }}
       >
         {loading && <div style={{ position: 'absolute', top: 10, left: 10, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '4px 10px', borderRadius: 4, fontSize: 12, zIndex: 30 }}>Caricamento...</div>}
-        <canvas ref={canvasRef} style={{ display: 'block', maxWidth: '100%', position: 'relative', zIndex: 1 }} />
-        <ZoneOverlay template={template} scale={scale} yOffset={yOffset} />
+        <canvas
+          ref={canvasRef}
+          style={{ display: 'block', maxWidth: '100%', position: 'relative', zIndex: 1 }}
+          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (!onTagDrop) return;
+            const raw = e.dataTransfer.getData('application/tag-index');
+            if (raw === '') return;
+            const index = parseInt(raw, 10);
+            if (isNaN(index)) return;
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const canvasX = (e.clientX - rect.left) * scaleX;
+            const canvasY = (e.clientY - rect.top) * scaleY;
+            const pdfX = Math.round(canvasX / scale);
+            const pdfY = Math.round(canvasY / scale) - yOffset;
+            onTagDrop(index, pdfX, pdfY);
+          }}
+        />
+        <ZoneOverlay template={template} scale={scale} yOffset={yOffset} canvasScaleX={canvasScaleX} canvasScaleY={canvasScaleY} />
       </div>
     </div>
   );

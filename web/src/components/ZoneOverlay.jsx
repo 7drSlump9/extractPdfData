@@ -17,12 +17,19 @@ const SECTION_COLORS = {
   footer: { bg: 'rgba(239,68,68,0.08)', border: '#ef4444' },
 };
 
-export default function ZoneOverlay({ template, scale, yOffset = 0 }) {
+export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1 }) {
   const [showZones, setShowZones] = useState(true);
   if (!template || !scale) return null;
 
   const toCanvas = (v) => (Number.isFinite(Number(v)) ? Number(v) * scale : 0);
+  const cssScaleX = canvasScaleX || 1;
+  const cssScaleY = canvasScaleY || 1;
   const offsetY = toCanvas(yOffset);
+
+  const cssLeft = (v) => (Number.isFinite(Number(v)) ? Number(v) / cssScaleX : 0);
+  const cssTop = (v) => (Number.isFinite(Number(v)) ? Number(v) / cssScaleY : 0);
+  const cssW = (v) => (Number.isFinite(Number(v)) ? Number(v) / cssScaleX : 0);
+  const cssH = (v) => (Number.isFinite(Number(v)) ? Number(v) / cssScaleY : 0);
 
   const zones = [];
   const sections = [];
@@ -118,8 +125,8 @@ export default function ZoneOverlay({ template, scale, yOffset = 0 }) {
           {sections.map(s => (
             <div key={s.key} style={{
               position: 'absolute',
-              left: s.x ?? 0, top: s.y,
-              width: s.w ?? '100%', height: s.h,
+              left: cssLeft(s.x ?? 0), top: cssTop(s.y),
+              width: cssW(s.w ?? 0), height: cssH(s.h),
               backgroundColor: s.bg,
               border: `1px dashed ${s.border}`,
               pointerEvents: 'none',
@@ -137,16 +144,40 @@ export default function ZoneOverlay({ template, scale, yOffset = 0 }) {
 
           {/* Field/column zones */}
           {zones.map(z => (
-            <div key={z.key} style={{
-              position: 'absolute',
-              left: z.x, top: z.y,
-              width: z.w, height: z.h,
-              border: `2px solid ${z.border}`,
-              backgroundColor: z.color,
-              pointerEvents: 'none',
-              fontSize: 10, overflow: 'hidden',
-              zIndex: 20,
-            }}>
+            <div
+              key={z.key}
+              draggable={z.key.startsWith('h-')}
+              onDragStart={z.key.startsWith('h-') ? (e) => {
+                const idx = parseInt(z.key.split('-')[1], 10);
+                e.dataTransfer.setData('application/tag-index', String(idx));
+                e.dataTransfer.effectAllowed = 'move';
+                // Drag ghost con le stesse proporzioni del rettangolo
+                if (z.w > 0 && z.h > 0) {
+                  const ghost = document.createElement('canvas');
+                  const scale = Math.min(100 / z.w, 1);
+                  ghost.width = Math.max(z.w * scale, 20);
+                  ghost.height = Math.max(z.h * scale, 10);
+                  const ctx = ghost.getContext('2d');
+                  ctx.fillStyle = 'rgba(59,130,246,0.4)';
+                  ctx.fillRect(0, 0, ghost.width, ghost.height);
+                  ctx.strokeStyle = '#3b82f6';
+                  ctx.lineWidth = 2;
+                  ctx.strokeRect(0, 0, ghost.width, ghost.height);
+                  e.dataTransfer.setDragImage(ghost, 0, 0);
+                }
+              } : undefined}
+              style={{
+                position: 'absolute',
+                left: cssLeft(z.x), top: cssTop(z.y),
+                width: cssW(z.w), height: cssH(z.h),
+                border: `2px solid ${z.border}`,
+                backgroundColor: z.color,
+                pointerEvents: 'auto',
+                cursor: z.key.startsWith('h-') ? 'grab' : 'default',
+                fontSize: 10, overflow: 'hidden',
+                zIndex: 20,
+              }}
+            >
               <span style={{
                 background: 'rgba(0,0,0,0.7)',
                 color: '#fff', padding: '1px 4px',
