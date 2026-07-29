@@ -73,6 +73,7 @@ class Database:
 
             existing = session.query(Template).filter_by(name=name).first()
             if existing:
+                existing.customer_name = customer_name
                 existing.json_data_old = existing.json_data
                 existing.json_data = json_str
                 existing.signature = sig
@@ -126,7 +127,10 @@ class Database:
                 q = q.filter_by(customer_name=customer_name)
             tpl = q.first()
             if tpl and tpl.json_data:
-                return json.loads(tpl.json_data)
+                data = json.loads(tpl.json_data)
+                if 'customer_file' not in data:
+                    data['customer_file'] = tpl.customer_name
+                return data
             return None
         finally:
             session.close()

@@ -8,7 +8,7 @@ const css = {
   sidebar: { width: 340, background: '#1e293b', borderRight: '1px solid #334155', overflowY: 'auto', padding: 16, flexShrink: 0 },
   main: { flex: 1, display: 'flex', flexDirection: 'column' },
   topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', background: '#1e293b', borderBottom: '1px solid #334155' },
-  dropArea: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, overflow: 'auto' },
+  dropArea: { flex: 1, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 20, overflow: 'auto' },
   dropBox: { border: '2px dashed #475569', borderRadius: 12, padding: 40, textAlign: 'center', color: '#94a3b8', width: 500, cursor: 'pointer' },
   btn1: { background: '#6366f1', color: '#fff' },
   btn2: { background: '#22c55e', color: '#000' },
@@ -217,6 +217,7 @@ export default function TemplateEditor({ username, onLogout }) {
       if (!tpl || typeof tpl !== 'object') throw new Error('Dati template non validi');
       setTemplate(normalizeTemplate(tpl));
       setTemplateName(tpl.name || name);
+      setCustomerName(tpl.customer_file || '');
       msg(`OK: ${name}`, true);
     } catch (e) { msg(safeErrMsg(e), false); }
   };
@@ -230,6 +231,7 @@ export default function TemplateEditor({ username, onLogout }) {
         if (!tpl || typeof tpl !== 'object') throw new Error('JSON non valido');
         setTemplate(normalizeTemplate(tpl));
         setTemplateName(tpl.name || file.name.replace(/\.json$/i, ''));
+        setCustomerName(tpl.customer_file || '');
         msg('Template caricato da file', true);
       } catch (e) { msg(safeErrMsg(e), false); }
     };

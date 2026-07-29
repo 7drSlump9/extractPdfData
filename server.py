@@ -79,14 +79,15 @@ def api_list_templates():
 @app.route("/api/templates/<name>", methods=["GET"])
 @login_required
 def api_get_template(name):
-    customer = request.args.get("customer_name")
-    template = db.get_template_by_name(name, customer_name=customer or None)
+    template = db.get_template_by_name(name)
     if not template:
         # Fallback su disco
         disk = load_templates(TEMPLATES_DIR)
         for t in disk:
             if t.get("name") == name:
                 template = t
+                if 'customer_file' not in template:
+                    template['customer_file'] = 'UNKNOWN'
                 break
     if not template:
         return jsonify({"error": "Template non trovato"}), 404
