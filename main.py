@@ -92,23 +92,30 @@ def _collect_pages_via_ocr(pdf, dpi=PDF_OCR_DPI):
     """
     OCR pagine PDF scansionate. Preferisce l'immagine embedded full-page
     (alta res); altrimenti render a dpi.
+    Ritorna (lines, full_text, page_images) dove page_images e' lista di
+    (img, page_width, page_height) per scaling coordinate.
     """
     from image_ocr import collect_lines_from_pil_images
 
     images = []
     labels = []
     sources = []
+    page_dims = []
     for i, page in enumerate(pdf.pages):
+        pw = float(page.width or 0)
+        ph = float(page.height or 0)
         embedded = _embedded_fullpage_image(page)
         if embedded is not None:
             images.append(embedded)
             labels.append(f"pagina {i + 1} (embedded)")
             sources.append("embedded")
+            page_dims.append((pw, ph))
         else:
             page_image = page.to_image(resolution=dpi)
             images.append(page_image.original.copy())
             labels.append(f"pagina {i + 1} (render {dpi}dpi)")
             sources.append("render")
+            page_dims.append((pw, ph))
 
     n_emb = sources.count("embedded")
     n_ren = sources.count("render")
@@ -116,7 +123,13 @@ def _collect_pages_via_ocr(pdf, dpi=PDF_OCR_DPI):
         f"OCR su {len(images)} pagina/e PDF "
         f"(embedded={n_emb}, render={n_ren})..."
     )
-    return collect_lines_from_pil_images(images, labels=labels)
+    lines, full_text = collect_lines_from_pil_images(images, labels=labels)
+    # Per OCR zonale: render a DPI (stesso orientamento della pagina PDF)
+    page_renders = []
+    for i, page in enumerate(pdf.pages):
+        ri = page.to_image(resolution=dpi)
+        page_renders.append(ri.original.copy())
+    return lines, full_text, list(zip(images, page_dims, page_renders))
 
 
 def _valore_utile(v):
@@ -194,17 +207,30 @@ def _pack_ai_dati(dati_ai, template):
     return dati_out
 
 
-def _match_or_none(lines, full_text, customer_name="UNKNOWN"):
-    # Prima cerca nel DB (solo template del customer)
+def _match_or_none(lines, full_text, customer_name="UNKNOWN", fuzzy=False, page_images=None):
+    min_ratio = 0.5 if fuzzy else 1.0
+    # Prima cerca nel DB per customer specifico
     db_templates = db.get_all_templates(customer_name=customer_name)
-    template = match_template(db_templates, full_text)
+    template = match_template(db_templates, full_text, min_match_ratio=min_ratio)
     if template:
-        return apply_template(template, lines, full_text), template
-    # Fallback su disco
+        return apply_template(template, lines, full_text, page_images=page_images), template
+    # Se non trovato, cerca in tutti i template DB (customer puo' variare)
+    if customer_name != "UNKNOWN":
+        all_db_templates = db.get_all_templates()  # tutti
+        template = match_template(all_db_templates, full_text, min_match_ratio=min_ratio)
+        if template:
+            return apply_template(template, lines, full_text, page_images=page_images), template
+    # Fallback su disco: templates/ root
     disk_templates = load_templates(TEMPLATES_DIR)
-    template = match_template(disk_templates, full_text)
+    template = match_template(disk_templates, full_text, min_match_ratio=min_ratio)
     if template:
-        return apply_template(template, lines, full_text), template
+        return apply_template(template, lines, full_text, page_images=page_images), template
+    # Fallback: templates/draft_ocr/ (template OCR non ancora promossi)
+    if TEMPLATES_DRAFT_OCR_DIR.exists():
+        draft_templates = load_templates(TEMPLATES_DRAFT_OCR_DIR)
+        template = match_template(draft_templates, full_text, min_match_ratio=min_ratio)
+        if template:
+            return apply_template(template, lines, full_text, page_images=page_images), template
     return None
 
 
@@ -298,12 +324,15 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", t
     )
 
 
-def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", template_name=None):
+def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", template_name=None, page_images=None):
     """
     OCR (foto o PDF scansionato): prompt ocr.
     Template salvato in draft_ocr/ SOLO se gate stretto; altrimenti ai_oneshot.
     """
-    matched = _match_or_none(lines, full_text, customer_name=customer_name)
+    # Prova match esatto, poi fuzzy (50% firme bastano) per OCR rumoroso
+    matched = _match_or_none(lines, full_text, customer_name=customer_name, page_images=page_images)
+    if matched is None:
+        matched = _match_or_none(lines, full_text, customer_name=customer_name, fuzzy=True, page_images=page_images)
     if matched is not None:
         dati, template = matched
         db.save_template(template, customer_name)
@@ -319,7 +348,7 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", t
     dati_ai, nuovo_template, save_template, customer_name = _bootstrap_ai(
         lines, full_text, mode="ocr", customer_name=customer_name, template_name=template_name
     )
-    dati_motore = apply_template(nuovo_template, lines, full_text)
+    dati_motore = apply_template(nuovo_template, lines, full_text, page_images=page_images)
 
     righe_ai = dati_ai.get("righe", []) or []
     righe_motore = dati_motore.get("righe", []) or []
@@ -403,7 +432,7 @@ def estrai_ordine(pdf_path, customer_name="UNKNOWN", template_name=None):
             "Provo OCR (immagine embedded o render pagine)..."
         )
         try:
-            lines, full_text = _collect_pages_via_ocr(pdf)
+            lines, full_text, page_images = _collect_pages_via_ocr(pdf)
         except RuntimeError as e:
             raise RuntimeError(
                 f"Fallback OCR sul PDF fallito: {e}\n"
@@ -412,13 +441,18 @@ def estrai_ordine(pdf_path, customer_name="UNKNOWN", template_name=None):
             ) from e
 
         if not _has_usable_text(full_text):
-            raise RuntimeError(
-                "OCR non ha estratto testo utile dal PDF. "
-                "Verifica qualita' della scansione e installazione Tesseract "
-                "(tesseract --version) con lingue ita/eng."
-            )
+            # Prova OCR zonale come ultima risorsa: se abbiamo immagini, OCR globale ha fallito,
+            # ma OCR zonale sui singoli campi potrebbe ancora funzionare.
+            if page_images:
+                print("OCR globale ha prodotto poco testo. Uso comunque OCR zonale sui campi.")
+            else:
+                raise RuntimeError(
+                    "OCR non ha estratto testo utile dal PDF. "
+                    "Verifica qualita' della scansione e installazione Tesseract "
+                    "(tesseract --version) con lingue ita/eng."
+                )
 
-        return _estrai_ocr(lines, full_text, source="ocr_pdf", customer_name=customer_name, template_name=template_name)
+        return _estrai_ocr(lines, full_text, source="ocr_pdf", customer_name=customer_name, template_name=template_name, page_images=page_images)
 
 
 def estrai_ordine_immagini(image_paths, customer_name="UNKNOWN", template_name=None):

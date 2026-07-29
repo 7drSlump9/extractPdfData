@@ -67,38 +67,100 @@ def load_templates(templates_dir):
     return templates
 
 
-def match_template(templates, full_text):
-    """Ritorna il template la cui 'signature' e' interamente contenuta nel testo.
+def match_template(templates, full_text, min_match_ratio=1.0):
+    """Ritorna il template la cui 'signature' e' contenuta nel testo.
+    min_match_ratio: frazione minima di firme che devono matchare (default 1.0 = tutte).
     Se piu' template combaciano, vince quello con la firma piu' specifica."""
     text_upper = full_text.upper()
     candidates = []
     for tpl in templates:
         sig = tpl.get('signature', [])
-        if sig and all(s.upper() in text_upper for s in sig):
-            candidates.append(tpl)
+        if not sig:
+            continue
+        matched = sum(1 for s in sig if s.upper() in text_upper)
+        ratio = matched / len(sig)
+        if ratio >= min_match_ratio and matched > 0:
+            candidates.append((tpl, matched, ratio))
     if not candidates:
         return None
+    # Ordina: piu' firme matchate, poi ratio piu' alto, poi firma piu' lunga
     candidates.sort(
-        key=lambda t: (len(t.get('signature', [])), sum(len(s) for s in t.get('signature', []))),
+        key=lambda x: (x[1], x[2], sum(len(s) for s in x[0].get('signature', []))),
         reverse=True,
     )
-    return candidates[0]
+    return candidates[0][0]
 
 
 # ---------------------------------------------------------------------------
 # Estrazione campi di intestazione
 # ---------------------------------------------------------------------------
-def extract_header_field(config, full_text, lines):
+def extract_header_field(config, full_text, lines, page_images=None):
     ftype = config.get('type', 'regex_full_text')
     group = config.get('group', 1)
 
     if ftype == 'regex_full_text':
-        # Se ci sono coordinate, filtra il testo dentro il rettangolo
         x_min = config.get('x_min')
         x_max = config.get('x_max')
         y_min = config.get('y_min')
         y_max = config.get('y_max')
         if x_min is not None and x_max is not None and y_min is not None and y_max is not None:
+            # OCR zonale mirato se abbiamo immagini (piu' preciso dell'OCR globale)
+            if page_images:
+                from PIL import Image
+                from image_ocr import ocr_zone
+                # page_images: lista di (img, (page_w, page_h), render_dpi) tuple
+                if isinstance(page_images, list) and len(page_images) > 0:
+                    img, page_dims = page_images[0][:2]  # default prima pagina
+                    render = page_images[0][2] if len(page_images[0]) > 2 else None
+                    for pi in page_images:
+                        pd = pi[1]
+                        page_h = pd[1] if pd[1] > 0 else 1
+                        if y_min < page_h:
+                            img, page_dims = pi[0], pi[1]
+                            render = pi[2] if len(pi) > 2 else None
+                            break
+                    pw, ph = page_dims
+                    # Preferisce render DPI per OCR zonale (orientamento = pagina, coordinate lineari)
+                    ocr_img = None
+                    if render is not None and hasattr(render, 'size'):
+                        ocr_img = render
+                    elif pw > 0 and ph > 0 and hasattr(img, 'size'):
+                        ocr_img = img
+                        # Se orientamento != pagina, ruota
+                        page_landscape = pw > ph
+                        img_landscape = ocr_img.size[0] > ocr_img.size[1]
+                        if page_landscape != img_landscape:
+                            ocr_img = ocr_img.transpose(Image.ROTATE_270 if img_landscape else Image.ROTATE_90)
+                    if ocr_img is not None and hasattr(ocr_img, 'size'):
+                        iw_img, ih_img = ocr_img.size
+                        ratio_x = iw_img / pw if pw > 0 else 1
+                        ratio_y = ih_img / ph if ph > 0 else 1
+                        ix = int(x_min * ratio_x)
+                        iy = int(y_min * ratio_y)
+                        iw = int((x_max - x_min) * ratio_x)
+                        ih = int((y_max - y_min) * ratio_y)
+                        try:
+                            text = ocr_zone(ocr_img, ix, iy, iw, ih)
+                            if text:
+                                m = re.search(config['pattern'], text)
+                                result = _safe_group(m, group)
+                                if result and result != "N/A":
+                                    return result
+                        except Exception:
+                            pass  # fallback a OCR globale
+                elif not isinstance(page_images, list):
+                    # Vecchio formato: singola immagine senza dims
+                    img = page_images
+                    w = x_max - x_min
+                    h = y_max - y_min
+                    try:
+                        text = ocr_zone(img, x_min, y_min, w, h)
+                        if text:
+                            m = re.search(config['pattern'], text)
+                            return _safe_group(m, group) or "N/A"
+                    except Exception:
+                        pass
+            # Fallback: filtra testo OCR globale dentro il rettangolo
             words_in_box = []
             for top, row in lines:
                 if y_min <= top <= y_max:
@@ -375,14 +437,14 @@ def extract_table(table_config, lines):
 # ---------------------------------------------------------------------------
 # Applicazione completa di un template a un documento
 # ---------------------------------------------------------------------------
-def apply_template(template, lines, full_text):
+def apply_template(template, lines, full_text, page_images=None):
     result = {"formato": template.get('name', 'UNKNOWN')}
     # Retrocompatibilità: header.fields (nuovo) oppure header_fields (vecchio)
     header_fields = template.get('header', {}).get('fields', None)
     if header_fields is None:
         header_fields = template.get('header_fields', {})
     for field_name, cfg in header_fields.items():
-        result[field_name] = extract_header_field(cfg, full_text, lines)
+        result[field_name] = extract_header_field(cfg, full_text, lines, page_images=page_images)
     result['righe'] = extract_table(template.get('table'), lines)
     return result
 

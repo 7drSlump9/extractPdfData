@@ -199,6 +199,49 @@ def _ocr_page_words(image: Image.Image, lang: str = "ita+eng"):
     return words, float(oriented.height or 0), degrees
 
 
+def ocr_zone(image, x, y, w, h, lang="ita+eng"):
+    """OCR su una zona specifica dell'immagine con alta precisione."""
+    _ensure_tesseract()
+    # Margine 15% per OCR zonale (abbastanza per includere testo, ma non troppo)
+    mx = max(5, int(w * 0.15))
+    my = max(5, int(h * 0.15))
+    x1 = max(0, x - mx)
+    y1 = max(0, y - my)
+    x2 = min(image.size[0], x + w + mx)
+    y2 = min(image.size[1], y + h + my)
+    cropped = image.crop((x1, y1, x2, y2))
+    # Preprocess: scala x2, PSM 6 (block uniforme) per testo in zona piccola
+    w2, h2 = cropped.size
+    if w2 < 600 or h2 < 300:
+        scale = min(4, max(2, int(600 / min(w2, h2))))
+        cropped = cropped.resize((w2 * scale, h2 * scale), Image.Resampling.LANCZOS)
+    try:
+        text = pytesseract.image_to_string(
+            cropped, lang=lang,
+            config='--psm 6'
+        ).strip()
+    except pytesseract.TesseractError:
+        text = pytesseract.image_to_string(
+            cropped, lang='eng',
+            config='--psm 6'
+        ).strip()
+    # Verifica risultato sensato (non solo rumore)
+    if text and len(text) >= 2 and not all(c in '-—_\u2014\u2015\u2013' for c in text):
+        return text
+    # Retry con PSM 3 (più aggressivo)
+    try:
+        text = pytesseract.image_to_string(
+            cropped, lang=lang,
+            config='--psm 3'
+        ).strip()
+    except pytesseract.TesseractError:
+        text = pytesseract.image_to_string(
+            cropped, lang='eng',
+            config='--psm 3'
+        ).strip()
+    return text
+
+
 def _words_to_lines(words):
     """Raggruppa parole per Y arrotondato, come template_engine.get_lines."""
     buckets = defaultdict(list)
