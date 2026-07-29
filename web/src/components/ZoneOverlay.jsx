@@ -93,12 +93,10 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
   // --- Header section ---
   const hdr = template.header;
   if (hdr) {
-    const hdrX = toCanvas(hdr.x_min ?? 0);
-    const hdrW = Math.max(Math.abs(toCanvas(hdr.x_max ?? 0) - hdrX), 10);
     const hdrY = toCanvas(hdr.y_min ?? 0) + offsetY;
-    const hdrH = Math.max(Math.abs(toCanvas(hdr.y_max ?? 200) - hdrY), 10);
+    const hdrH = Math.max(Math.abs(toCanvas(hdr.y_max ?? 200) - toCanvas(hdr.y_min ?? 0)), 10);
     sections.push({
-      key: 'sec-hdr', x: hdrX, w: hdrW, y: hdrY, h: hdrH,
+      key: 'sec-hdr', x: 0, w: 9999, y: hdrY, h: hdrH,
       bg: SECTION_COLORS.header.bg, border: SECTION_COLORS.header.border,
       label: 'HEADER',
     });

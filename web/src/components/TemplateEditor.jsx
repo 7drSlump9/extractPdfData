@@ -432,17 +432,6 @@ export default function TemplateEditor({ username, onLogout }) {
                   <button onClick={addHdr} style={{ ...css.btn1, fontSize: 14, padding: '4px 10px' }}>+</button>
                 </div>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
-                  <span style={{ fontSize: 10, color: '#94a3b8' }}>X:</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <button onClick={() => updHdrSection('x_min', (template.header?.x_min || 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
-                    <input type="number" value={template.header?.x_min || 0} onChange={e => updHdrSection('x_min', e.target.value)} style={{ width: 45, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                    <button onClick={() => updHdrSection('x_min', (template.header?.x_min || 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <button onClick={() => updHdrSection('x_max', (template.header?.x_max || 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
-                    <input type="number" value={template.header?.x_max || 0} onChange={e => updHdrSection('x_max', e.target.value)} style={{ width: 45, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                    <button onClick={() => updHdrSection('x_max', (template.header?.x_max || 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
-                  </div>
                   <span style={{ fontSize: 10, color: '#94a3b8' }}>Y:</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <button onClick={() => updHdrSection('y_min', (template.header?.y_min || 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
