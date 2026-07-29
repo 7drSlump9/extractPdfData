@@ -174,12 +174,13 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
                 backgroundColor: z.color,
                 pointerEvents: 'auto',
                 cursor: z.key.startsWith('h-') ? 'grab' : 'default',
-                fontSize: 10, overflow: 'hidden',
+                fontSize: 10,
                 zIndex: 20,
               }}
             >
               <span style={{
-                background: 'rgba(0,0,0,0.7)',
+                position: 'absolute', top: '-18px', left: 0,
+                background: 'rgba(0,0,0,0.85)',
                 color: '#fff', padding: '1px 4px',
                 whiteSpace: 'nowrap', borderRadius: 2,
                 lineHeight: '14px',
