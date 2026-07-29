@@ -291,6 +291,14 @@ export default function TemplateEditor({ username, onLogout }) {
     setTemplate({ ...template, header: { ...template.header, fields: newFields } });
   };
 
+  const handleHdrResize = (index, newField) => {
+    const fields = template?.header?.fields;
+    if (!fields || index >= fields.length) return;
+    const newFields = [...fields];
+    newFields[index] = { ...newFields[index], ...newField };
+    setTemplate({ ...template, header: { ...template.header, fields: newFields } });
+  };
+
   // --- Table helpers ---
   const addCol = () => {
     const cur = template?.table?.columns || [];
@@ -652,7 +660,7 @@ Signature: ${(template.signature || []).join(', ') || '-'}`}
           </div>
           <div style={css.dropArea} onDragOver={e => e.preventDefault()} onDrop={handleDrop}>
             {pdfFile ? (
-              <PdfViewer file={pdfFile} template={template} onTagDrop={handleTagDrop} />
+              <PdfViewer file={pdfFile} template={template} onTagDrop={handleTagDrop} onHdrResize={handleHdrResize} />
             ) : (
               <div style={css.dropBox}>
                 <div style={{ fontSize: 40, marginBottom: 8 }}>.</div>

@@ -17,8 +17,31 @@ const SECTION_COLORS = {
   footer: { bg: 'rgba(239,68,68,0.08)', border: '#ef4444' },
 };
 
-export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1 }) {
+const RESIZE_HANDLE = {
+  size: 6,
+  style: {
+    position: 'absolute',
+    background: '#fff',
+    border: '1px solid #000',
+    zIndex: 30,
+    pointerEvents: 'auto',
+  },
+};
+
+const HANDLE_POSITIONS = {
+  nw: { top: -3, left: -3, cursor: 'nw-resize' },
+  n:  { top: -3, left: '50%', marginLeft: -3, cursor: 'n-resize' },
+  ne: { top: -3, right: -3, cursor: 'ne-resize' },
+  e:  { top: '50%', marginTop: -3, right: -3, cursor: 'e-resize' },
+  se: { bottom: -3, right: -3, cursor: 'se-resize' },
+  s:  { bottom: -3, left: '50%', marginLeft: -3, cursor: 's-resize' },
+  sw: { bottom: -3, left: -3, cursor: 'sw-resize' },
+  w:  { top: '50%', marginTop: -3, left: -3, cursor: 'w-resize' },
+};
+
+export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1, onHdrResize }) {
   const [showZones, setShowZones] = useState(true);
+  const resizeRef = React.useRef(null);
   if (!template || !scale) return null;
 
   const toCanvas = (v) => (Number.isFinite(Number(v)) ? Number(v) * scale : 0);
@@ -30,6 +53,39 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
   const cssTop = (v) => (Number.isFinite(Number(v)) ? Number(v) / cssScaleY : 0);
   const cssW = (v) => (Number.isFinite(Number(v)) ? Number(v) / cssScaleX : 0);
   const cssH = (v) => (Number.isFinite(Number(v)) ? Number(v) / cssScaleY : 0);
+
+  // Resize handlers
+  const handleResizeStart = (e, fieldIdx, handle) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const fields = template?.header?.fields;
+    if (!fields || fieldIdx >= fields.length) return;
+    const f = fields[fieldIdx];
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const origField = { ...f };
+
+    const onMove = (ev) => {
+      const dx = (ev.clientX - startX) / (cssScaleX * scale);
+      const dy = (ev.clientY - startY) / (cssScaleY * scale);
+      const newField = { ...f };
+      if (handle.includes('n')) newField.y_min = Math.round(origField.y_min + dy);
+      if (handle.includes('s')) newField.y_max = Math.round(origField.y_max + dy);
+      if (handle.includes('w')) newField.x_min = Math.round(origField.x_min + dx);
+      if (handle.includes('e')) newField.x_max = Math.round(origField.x_max + dx);
+      if (onHdrResize) onHdrResize(fieldIdx, newField);
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      resizeRef.current = null;
+    };
+
+    resizeRef.current = { onMove, onUp };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
 
   const zones = [];
   const sections = [];
@@ -187,6 +243,28 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
               }}>
                 {z.label}
               </span>
+              {/* Resize handles solo per header fields */}
+              {z.key.startsWith('h-') && Object.entries(HANDLE_POSITIONS).map(([hKey, hStyle]) => (
+                <div
+                  key={hKey}
+                  onMouseDown={(e) => {
+                    const idx = parseInt(z.key.split('-')[1], 10);
+                    handleResizeStart(e, idx, hKey);
+                  }}
+                  style={{
+                    ...RESIZE_HANDLE.style,
+                    width: RESIZE_HANDLE.size,
+                    height: RESIZE_HANDLE.size,
+                    cursor: hStyle.cursor,
+                    top: hStyle.top,
+                    left: hStyle.left,
+                    right: hStyle.right,
+                    bottom: hStyle.bottom,
+                    marginTop: hStyle.marginTop,
+                    marginLeft: hStyle.marginLeft,
+                  }}
+                />
+              ))}
             </div>
           ))}
         </div>
