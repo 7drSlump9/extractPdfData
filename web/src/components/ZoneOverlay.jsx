@@ -66,7 +66,7 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
     const tblY = toCanvas(tbl.y_min ?? 200) + offsetY;
     const tblH = Math.max(Math.abs(toCanvas(tbl.y_max ?? 600) - tblY), 10);
     sections.push({
-      key: 'sec-tbl', y: tblY, h: tblH,
+      key: 'sec-tbl', x: 0, w: 9999, y: tblY, h: tblH,
       bg: SECTION_COLORS.table.bg, border: SECTION_COLORS.table.border,
       label: 'TABLE',
     });
@@ -88,7 +88,7 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
     const ftrY = toCanvas(ftr.y_min ?? 600) + offsetY;
     const ftrH = Math.max(Math.abs(toCanvas(ftr.y_max ?? 800) - ftrY), 10);
     sections.push({
-      key: 'sec-ftr', y: ftrY, h: ftrH,
+      key: 'sec-ftr', x: 0, w: 9999, y: ftrY, h: ftrH,
       bg: SECTION_COLORS.footer.bg, border: SECTION_COLORS.footer.border,
       label: 'FOOTER',
     });

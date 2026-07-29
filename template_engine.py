@@ -17,6 +17,16 @@ from collections import defaultdict
 NUMERIC_RE = re.compile(r'^[\d\.,]+$')
 
 
+def _safe_group(m, group=1):
+    """m.group(group) con fallback a group(0) se il gruppo non esiste."""
+    if m is None:
+        return None
+    try:
+        return m.group(group)
+    except IndexError:
+        return m.group(0)
+
+
 # ---------------------------------------------------------------------------
 # Utility di basso livello sul layout del PDF
 # ---------------------------------------------------------------------------
@@ -83,8 +93,23 @@ def extract_header_field(config, full_text, lines):
     group = config.get('group', 1)
 
     if ftype == 'regex_full_text':
-        m = re.search(config['pattern'], full_text)
-        return m.group(group) if m else "N/A"
+        # Se ci sono coordinate, filtra il testo dentro il rettangolo
+        x_min = config.get('x_min')
+        x_max = config.get('x_max')
+        y_min = config.get('y_min')
+        y_max = config.get('y_max')
+        if x_min is not None and x_max is not None and y_min is not None and y_max is not None:
+            words_in_box = []
+            for top, row in lines:
+                if y_min <= top <= y_max:
+                    for w in row:
+                        if x_min <= round(w['x0']) < x_max:
+                            words_in_box.append(w['text'])
+            text = " ".join(words_in_box)
+        else:
+            text = full_text
+        m = re.search(config['pattern'], text)
+        return _safe_group(m, group) or "N/A"
 
     if ftype == 'regex_column_filtered':
         x_min = config.get('x_min', 0)
@@ -93,7 +118,7 @@ def extract_header_field(config, full_text, lines):
             text = " ".join(w['text'] for w in row if x_min <= round(w['x0']) < x_max)
             m = re.search(config['pattern'], text)
             if m:
-                return m.group(group)
+                return _safe_group(m, group) or "N/A"
         return "N/A"
 
     if ftype == 'label_then_value_below':
@@ -107,7 +132,7 @@ def extract_header_field(config, full_text, lines):
                     next_text = line_text(next_row).strip()
                     m = value_re.match(next_text)
                     if m:
-                        return m.group(group)
+                        return _safe_group(m, group) or "N/A"
                 break
         return "N/A"
 
@@ -306,7 +331,7 @@ def extract_table(table_config, lines):
         if cfe:
             joined_cont = " ".join(current_continuation)
             m = re.search(cfe['pattern'], joined_cont)
-            row[cfe['name']] = m.group(1) if m else "N/A"
+            row[cfe['name']] = _safe_group(m, 1) or "N/A"
 
         rows.append(row)
         current_tokens = None
