@@ -39,7 +39,7 @@ const HANDLE_POSITIONS = {
   w:  { top: '50%', marginTop: -3, left: -3, cursor: 'w-resize' },
 };
 
-export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1, onHdrResize }) {
+export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1, onHdrResize, onZoneClick, selectedZoneIndex }) {
   const [showZones, setShowZones] = useState(true);
   const resizeRef = React.useRef(null);
   if (!template || !scale) return null;
@@ -203,6 +203,11 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
             <div
               key={z.key}
               draggable={z.key.startsWith('h-')}
+              onClick={z.key.startsWith('h-') ? (e) => {
+                e.stopPropagation();
+                const idx = parseInt(z.key.split('-')[1], 10);
+                if (onZoneClick) onZoneClick(idx);
+              } : undefined}
               onDragStart={z.key.startsWith('h-') ? (e) => {
                 const idx = parseInt(z.key.split('-')[1], 10);
                 e.dataTransfer.setData('application/tag-index', String(idx));
@@ -244,7 +249,7 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
                 {z.label}
               </span>
               {/* Resize handles solo per header fields */}
-              {z.key.startsWith('h-') && Object.entries(HANDLE_POSITIONS).map(([hKey, hStyle]) => (
+              {z.key.startsWith('h-') && parseInt(z.key.split('-')[1], 10) === selectedZoneIndex && Object.entries(HANDLE_POSITIONS).map(([hKey, hStyle]) => (
                 <div
                   key={hKey}
                   onMouseDown={(e) => {

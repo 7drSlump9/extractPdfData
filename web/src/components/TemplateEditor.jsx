@@ -660,7 +660,7 @@ Signature: ${(template.signature || []).join(', ') || '-'}`}
           </div>
           <div style={css.dropArea} onDragOver={e => e.preventDefault()} onDrop={handleDrop}>
             {pdfFile ? (
-              <PdfViewer file={pdfFile} template={template} onTagDrop={handleTagDrop} onHdrResize={handleHdrResize} />
+              <PdfViewer file={pdfFile} template={template} onTagDrop={handleTagDrop} onHdrResize={handleHdrResize} onZoneClick={(idx) => setOpenHdrIdx(idx === openHdrIdx ? null : idx)} selectedZoneIndex={openHdrIdx} />
             ) : (
               <div style={css.dropBox}>
                 <div style={{ fontSize: 40, marginBottom: 8 }}>.</div>

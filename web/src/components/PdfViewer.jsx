@@ -5,7 +5,7 @@ import ZoneOverlay from './ZoneOverlay';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
-export default function PdfViewer({ file, template, onTagDrop, onHdrResize }) {
+export default function PdfViewer({ file, template, onTagDrop, onHdrResize, onZoneClick, selectedZoneIndex }) {
   const canvasRef = useRef(null);
   const pdfDocRef = useRef(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -121,7 +121,7 @@ export default function PdfViewer({ file, template, onTagDrop, onHdrResize }) {
             onTagDrop(index, pdfX, pdfY);
           }}
         />
-        <ZoneOverlay template={template} scale={scale} yOffset={yOffset} canvasScaleX={canvasScaleX} canvasScaleY={canvasScaleY} onHdrResize={onHdrResize} />
+        <ZoneOverlay template={template} scale={scale} yOffset={yOffset} canvasScaleX={canvasScaleX} canvasScaleY={canvasScaleY} onHdrResize={onHdrResize} onZoneClick={onZoneClick} selectedZoneIndex={selectedZoneIndex} />
       </div>
     </div>
   );
