@@ -48,7 +48,16 @@ Devi produrre un TEMPLATE in JSON con questa struttura:
   "table": {
     "y_min": 200,
     "y_max": 600,
-    <FORM A rows OPPURE FORM B side_by_side_items>
+    "layout": "rows",
+    "start_after_contains": ["parole header tabella"],
+    "end_markers": ["TOTALE"],
+    "row_detect_pattern": "regex inizio riga articolo (re.match sull'intera riga)",
+    "skip_line_if_matches": "(opzionale) regex da saltare",
+    "columns": [
+      {"name": "nome_campo", "x_min": 0, "x_max": 100, "value": "first_word|joined_text|numeric|unit_prefix"}
+    ],
+    "continuation_join_field": "(opzionale)",
+    "continuation_field_extract": {"name": "campo", "pattern": "regex con un gruppo"}
   },
   "footer": {
     "y_min": 600,
@@ -63,50 +72,12 @@ y_min/y_max di table = zona della griglia articoli. y_min/y_max di footer = zona
 sotto la tabella (totali, firme, note). Ogni field in header.fields puo' avere
 opzionalmente x_min/x_max/y_min/y_max per delimitare la zona di ricerca.
 
-FORM A - tabella classica (una riga orizzontale = un articolo), default:
-{
-  "layout": "rows",
-  "start_after_contains": ["parole header tabella"],
-  "end_markers": ["TOTALE"],
-  "row_detect_pattern": "regex inizio riga articolo (re.match sull'intera riga)",
-  "skip_line_if_matches": "(opzionale) regex da saltare",
-  "columns": [
-    {"name": "nome_campo", "x_min": 0, "x_max": 100, "value": "first_word|joined_text|numeric|unit_prefix"}
-  ],
-  "continuation_join_field": "(opzionale)",
-  "continuation_field_extract": {"name": "campo", "pattern": "regex con un gruppo"}
-}
-
-FORM B - articoli AFFIANCATI (N colonne verticali = N prodotti sulla stessa Y):
-usa se sulla STESSA Y compaiono N valori a X diverse (es. "NR NR NR", tre quantita').
-NON unire le colonne in un solo articolo.
-{
-  "layout": "side_by_side_items",
-  "start_after_contains": [],
-  "end_markers": [],
-  "item_x_bands": [
-    {"x_min": 2300, "x_max": 2365},
-    {"x_min": 2365, "x_max": 2415}
-  ],
-  "fields": [
-    {"name": "codice_articolo", "mode": "first_line", "skip_if_match": "^(NR|\\\\d)"},
-    {"name": "descrizione", "mode": "join_lines", "until_match": "^(NR|\\\\d)", "max_lines": 4},
-    {"name": "quantita", "mode": "nth_regex", "pattern": "^[\\\\d.,]+$", "n": 0},
-    {"name": "prezzo_unitario", "mode": "nth_regex", "pattern": "^[\\\\d.,]+$", "n": 1},
-    {"name": "totale_riga", "mode": "nth_regex", "pattern": "^[\\\\d.,]+$", "n": 2}
-  ]
-}
-
 Regole header.fields (ogni campo puo' avere x_min/x_max/y_min/y_max opzionali):
 - {"type": "regex_full_text", "pattern": "...(gruppo)...", "group": 1}
 - {"type": "regex_column_filtered", "pattern": "...", "x_min": 0, "x_max": 300, "group": 1}
 - {"type": "label_then_value_below", "label_pattern": "...", "value_pattern": "...", "group": 1, "lookahead_lines": 5}
 
-value colonne (FORM A): first_word | joined_text | numeric | unit_prefix
-
-modes fields (FORM B): first_line | join_lines (+ until_match/skip_if_match/max_lines)
-  | nth_regex (n 0-based sui token che matchano pattern, alto->basso)
-  | nth_line_regex
+value colonne: first_word | joined_text | numeric | unit_prefix
 """
 
 SCHEMA_NATIVE = _SCHEMA_CORE + """

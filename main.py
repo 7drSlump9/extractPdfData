@@ -351,8 +351,7 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", t
             f"AI utili={q_ai}/{len(righe_ai)} id={id_ai:.0%}). "
             f"Uso dati grezzi AI one-shot per QUESTO documento."
         )
-        # Template AI salvato comunque nel DB
-        db.save_template(nuovo_template, customer_name)
+        # Template AI NON salvato nel DB: non ha passato il quality gate
         if q_ai >= q_motore and q_ai > 0:
             packed = _pack_ai_dati(dati_ai, nuovo_template)
         elif q_motore > 0:
@@ -533,7 +532,36 @@ def _save_json(dati, stem_source, output_path=None, append=False):
             )
 
 
+def _sync_templates_from_disk():
+    """Importa template JSON da disco nel DB se non esistono già (sync automatico)."""
+    import json as _json
+    dirs = [TEMPLATES_DIR, TEMPLATES_DRAFT_OCR_DIR]
+    imported = 0
+    for d in dirs:
+        if not d.exists():
+            continue
+        for path in sorted(d.glob("*.json")):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    tpl = _json.load(f)
+                name = tpl.get("name")
+                if not name:
+                    continue
+                existing = db.get_template_by_name(name)
+                if existing:
+                    continue  # già nel DB, non sovrascrivere
+                db.save_template(tpl, "UNKNOWN")
+                imported += 1
+                print(f"Importato template da disco: {path.name} -> DB")
+            except Exception as e:
+                print(f"WARN: impossibile importare {path.name}: {e}")
+    if imported:
+        print(f"Sync disco->DB completato: {imported} nuovi template importati.")
+
+
 if __name__ == "__main__":
+    _sync_templates_from_disk()
+
     if len(sys.argv) < 5:
         _print_usage()
         sys.exit(1)

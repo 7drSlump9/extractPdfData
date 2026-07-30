@@ -562,13 +562,6 @@ export default function TemplateEditor({ username, onLogout }) {
                     <button onClick={() => updTableY('y_max', (template.table?.y_max || 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 4, marginBottom: 6, alignItems: 'center' }}>
-                  <span style={{ fontSize: 10, color: '#94a3b8' }}>Layout:</span>
-                  <select value={template.table?.layout || 'rows'} onChange={e => updTableStr('layout', e.target.value)} style={{ fontSize: 11, padding: '2px 4px', background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 4 }}>
-                    <option value="rows">rows (normale)</option>
-                    <option value="side_by_side_items">side_by_side (articoli affiancati)</option>
-                  </select>
-                </div>
                 {(template.table?.columns || []).map((c, i) => {
                   const isOpen = openColIdx === i;
                   return (
