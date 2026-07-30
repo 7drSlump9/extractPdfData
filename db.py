@@ -135,6 +135,23 @@ class Database:
         finally:
             session.close()
 
+    def deactivate_template(self, name: str) -> bool:
+        """Soft-delete: imposta is_active=False."""
+        session = self.get_session()
+        try:
+            tpl = session.query(Template).filter_by(name=name, is_active=True).first()
+            if not tpl:
+                return False
+            tpl.is_active = False
+            tpl.updated_at = datetime.utcnow()
+            session.commit()
+            return True
+        except SQLAlchemyError:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
     def get_all_templates(self, customer_name: str = None) -> list[dict]:
         """Ritorna tutti i template attivi dal DB come lista di dict, filtrati per customer."""
         session = self.get_session()

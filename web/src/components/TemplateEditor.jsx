@@ -302,6 +302,14 @@ export default function TemplateEditor({ username, onLogout }) {
     setTemplate({ ...template, header: { ...template.header, fields: newFields } });
   };
 
+  const handleColResize = (index, newCol) => {
+    const cols = template?.table?.columns;
+    if (!cols || index >= cols.length) return;
+    const newCols = [...cols];
+    newCols[index] = { ...newCols[index], ...newCol };
+    setTemplate({ ...template, table: { ...template.table, columns: newCols } });
+  };
+
   // --- Table helpers ---
   const addCol = () => {
     const cur = template?.table?.columns || [];
@@ -502,29 +510,29 @@ export default function TemplateEditor({ username, onLogout }) {
                             <span style={{ color: '#94a3b8' }}>X</span>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <button onClick={() => updHdr(i, 'x_min', (f.x_min ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <button onClick={() => { updHdr(i, 'x_min', (f.x_min ?? 0) - 5); updHdr(i, 'x_max', (f.x_max ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
                                 <input type="number" value={f.x_min ?? 0} onChange={e => updHdr(i, 'x_min', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                                <button onClick={() => updHdr(i, 'x_min', (f.x_min ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                                <button onClick={() => { updHdr(i, 'x_min', (f.x_min ?? 0) + 5); updHdr(i, 'x_max', (f.x_max ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                               </div>
                               <span style={{ color: '#64748b', fontSize: 10 }}>→</span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <button onClick={() => updHdr(i, 'x_max', (f.x_max ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <button onClick={() => { updHdr(i, 'x_max', (f.x_max ?? 0) - 5); updHdr(i, 'x_min', (f.x_min ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
                                 <input type="number" value={f.x_max ?? 0} onChange={e => updHdr(i, 'x_max', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                                <button onClick={() => updHdr(i, 'x_max', (f.x_max ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                                <button onClick={() => { updHdr(i, 'x_max', (f.x_max ?? 0) + 5); updHdr(i, 'x_min', (f.x_min ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                               </div>
                             </div>
                             <span style={{ color: '#94a3b8' }}>Y</span>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <button onClick={() => updHdr(i, 'y_min', (f.y_min ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <button onClick={() => { updHdr(i, 'y_min', (f.y_min ?? 0) - 5); updHdr(i, 'y_max', (f.y_max ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
                                 <input type="number" value={f.y_min ?? 0} onChange={e => updHdr(i, 'y_min', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                                <button onClick={() => updHdr(i, 'y_min', (f.y_min ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                                <button onClick={() => { updHdr(i, 'y_min', (f.y_min ?? 0) + 5); updHdr(i, 'y_max', (f.y_max ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                               </div>
                               <span style={{ color: '#64748b', fontSize: 10 }}>→</span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <button onClick={() => updHdr(i, 'y_max', (f.y_max ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <button onClick={() => { updHdr(i, 'y_max', (f.y_max ?? 0) - 5); updHdr(i, 'y_min', (f.y_min ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
                                 <input type="number" value={f.y_max ?? 0} onChange={e => updHdr(i, 'y_max', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                                <button onClick={() => updHdr(i, 'y_max', (f.y_max ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                                <button onClick={() => { updHdr(i, 'y_max', (f.y_max ?? 0) + 5); updHdr(i, 'y_min', (f.y_min ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                               </div>
                             </div>
                           </div>
@@ -596,15 +604,15 @@ export default function TemplateEditor({ username, onLogout }) {
                             <span style={{ color: '#94a3b8' }}>X</span>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <button onClick={() => updCol(i, 'x_min', (c.x_min ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <button onClick={() => updCol(i, 'x_min', (c.x_min ?? 0) - 5)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
                                 <input type="number" value={c.x_min ?? 0} onChange={e => updCol(i, 'x_min', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                                <button onClick={() => updCol(i, 'x_min', (c.x_min ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                                <button onClick={() => updCol(i, 'x_min', (c.x_min ?? 0) + 5)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                               </div>
                               <span style={{ color: '#64748b', fontSize: 10 }}>→</span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <button onClick={() => updCol(i, 'x_max', (c.x_max ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <button onClick={() => updCol(i, 'x_max', (c.x_max ?? 0) - 5)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
                                 <input type="number" value={c.x_max ?? 0} onChange={e => updCol(i, 'x_max', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                                <button onClick={() => updCol(i, 'x_max', (c.x_max ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                                <button onClick={() => updCol(i, 'x_max', (c.x_max ?? 0) + 5)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                               </div>
                             </div>
                           </div>
@@ -643,14 +651,14 @@ export default function TemplateEditor({ username, onLogout }) {
                     <input value={f.field || ''} onChange={e => updFtr(i, 'field', e.target.value)} placeholder="nome" style={{ ...css.inp, maxWidth: 70 }} />
                     <input value={f.regex || ''} onChange={e => updFtr(i, 'regex', e.target.value)} placeholder="regex" style={{ ...css.inp, maxWidth: 90 }} />
                     <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <button onClick={() => updFtr(i, 'x_min', (f.x_min ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                      <button onClick={() => { updFtr(i, 'x_min', (f.x_min ?? 0) - 5); updFtr(i, 'x_max', (f.x_max ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
                       <input type="number" value={f.x_min ?? 0} onChange={e => updFtr(i, 'x_min', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                      <button onClick={() => updFtr(i, 'x_min', (f.x_min ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                      <button onClick={() => { updFtr(i, 'x_min', (f.x_min ?? 0) + 5); updFtr(i, 'x_max', (f.x_max ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <button onClick={() => updFtr(i, 'x_max', (f.x_max ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                      <button onClick={() => { updFtr(i, 'x_max', (f.x_max ?? 0) - 5); updFtr(i, 'x_min', (f.x_min ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
                       <input type="number" value={f.x_max ?? 0} onChange={e => updFtr(i, 'x_max', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                      <button onClick={() => updFtr(i, 'x_max', (f.x_max ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                      <button onClick={() => { updFtr(i, 'x_max', (f.x_max ?? 0) + 5); updFtr(i, 'x_min', (f.x_min ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                     </div>
                     <button onClick={() => delFtr(i)} style={{ ...css.btn3, fontSize: 14, padding: '4px 8px' }}>x</button>
                   </div>
@@ -703,7 +711,7 @@ Signature: ${(template.signature || []).join(', ') || '-'}`}
           </div>
           <div style={css.dropArea} onDragOver={e => e.preventDefault()} onDrop={handleDrop}>
             {pdfFile ? (
-              <PdfViewer file={pdfFile} template={template} onTagDrop={handleTagDrop} onHdrResize={handleHdrResize} onZoneClick={(idx) => setOpenHdrIdx(idx === openHdrIdx ? null : idx)} selectedZoneIndex={openHdrIdx} />
+              <PdfViewer file={pdfFile} template={template} onTagDrop={handleTagDrop} onHdrResize={handleHdrResize} onColResize={handleColResize} onZoneClick={(idx) => setOpenHdrIdx(idx === openHdrIdx ? null : idx)} selectedZoneIndex={openHdrIdx} />
             ) : (
               <div style={css.dropBox}>
                 <div style={{ fontSize: 40, marginBottom: 8 }}>.</div>

@@ -39,7 +39,7 @@ const HANDLE_POSITIONS = {
   w:  { top: '50%', marginTop: -3, left: -3, cursor: 'w-resize' },
 };
 
-export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1, canvasRefWidth = 0, canvasRefHeight = 0, onHdrResize, onZoneClick, selectedZoneIndex }) {
+export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1, canvasRefWidth = 0, canvasRefHeight = 0, onHdrResize, onColResize, onZoneClick, selectedZoneIndex }) {
   const [showZones, setShowZones] = useState(true);
   const resizeRef = React.useRef(null);
   if (!template || !scale) return null;
@@ -87,6 +87,33 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
     };
 
     resizeRef.current = { onMove, onUp };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  // Resize handler per colonne table (solo X, non Y)
+  const handleColResizeStart = (e, colIdx, handle) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const cols = template?.table?.columns;
+    if (!cols || colIdx >= cols.length) return;
+    const c = cols[colIdx];
+    const startX = e.clientX;
+    const origCol = { ...c };
+
+    const onMove = (ev) => {
+      const dx = (ev.clientX - startX) / (cssScaleX * scale);
+      const newCol = { ...c };
+      if (handle === 'w') newCol.x_min = Math.round(origCol.x_min + dx);
+      if (handle === 'e') newCol.x_max = Math.round(origCol.x_max + dx);
+      if (onColResize) onColResize(colIdx, newCol);
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   };
@@ -270,6 +297,31 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
                   }}
                 />
               ))}
+              {/* Maniglie resize per colonne table (solo W e E) */}
+              {z.key.startsWith('c-') && ['w', 'e'].map(hKey => {
+                const hStyle = HANDLE_POSITIONS[hKey];
+                return (
+                  <div
+                    key={hKey}
+                    onMouseDown={(e) => {
+                      const idx = parseInt(z.key.split('-')[1], 10);
+                      handleColResizeStart(e, idx, hKey);
+                    }}
+                    style={{
+                      ...RESIZE_HANDLE.style,
+                      width: RESIZE_HANDLE.size,
+                      height: RESIZE_HANDLE.size,
+                      cursor: hStyle.cursor,
+                      top: hStyle.top,
+                      left: hStyle.left,
+                      right: hStyle.right,
+                      bottom: hStyle.bottom,
+                      marginTop: hStyle.marginTop,
+                      marginLeft: hStyle.marginLeft,
+                    }}
+                  />
+                );
+              })}
             </div>
           ))}
         </div>

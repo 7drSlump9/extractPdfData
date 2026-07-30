@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pdfplumber
 
-from template_engine import get_lines, line_text, load_templates, match_template, apply_template
+from template_engine import get_lines, line_text, match_template, apply_template
 from db import db
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -208,17 +208,6 @@ def _match_or_none(lines, full_text, customer_name="UNKNOWN", fuzzy=False, page_
     if customer_name != "UNKNOWN":
         all_db_templates = db.get_all_templates()  # tutti
         template = match_template(all_db_templates, full_text, min_match_ratio=min_ratio)
-        if template:
-            return apply_template(template, lines, full_text, page_images=page_images), template
-    # Fallback su disco: templates/ root
-    disk_templates = load_templates(TEMPLATES_DIR)
-    template = match_template(disk_templates, full_text, min_match_ratio=min_ratio)
-    if template:
-        return apply_template(template, lines, full_text, page_images=page_images), template
-    # Fallback: templates/draft_ocr/ (template OCR non ancora promossi)
-    if TEMPLATES_DRAFT_OCR_DIR.exists():
-        draft_templates = load_templates(TEMPLATES_DRAFT_OCR_DIR)
-        template = match_template(draft_templates, full_text, min_match_ratio=min_ratio)
         if template:
             return apply_template(template, lines, full_text, page_images=page_images), template
     return None

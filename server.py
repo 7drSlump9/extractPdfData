@@ -9,7 +9,7 @@ from flask import Flask, request, jsonify, session, send_from_directory
 from functools import wraps
 
 from db import db
-from template_engine import load_templates, match_template, apply_template
+from template_engine import match_template, apply_template
 
 app = Flask(__name__)
 app.secret_key = "cambiami-in-produzione-1234"  # TODO: env var
@@ -81,15 +81,6 @@ def api_list_templates():
 def api_get_template(name):
     template = db.get_template_by_name(name)
     if not template:
-        # Fallback su disco
-        disk = load_templates(TEMPLATES_DIR)
-        for t in disk:
-            if t.get("name") == name:
-                template = t
-                if 'customer_file' not in template:
-                    template['customer_file'] = 'UNKNOWN'
-                break
-    if not template:
         return jsonify({"error": "Template non trovato"}), 404
     return jsonify(template)
 
@@ -106,11 +97,7 @@ def api_save_template():
     customer = data.get("customer_file", data.get("customer_name", "UNKNOWN"))
     try:
         result = db.save_template(data, customer_name=customer)
-        # Salva anche su disco
-        json_path = TEMPLATES_DIR / f"{name}.json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        return jsonify({"ok": True, "db": result, "disk": str(json_path)})
+        return jsonify({"ok": True, "db": result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -118,12 +105,14 @@ def api_save_template():
 @app.route("/api/templates/<name>", methods=["DELETE"])
 @login_required
 def api_delete_template(name):
-    # TODO: soft-delete via DB (set is_active=False)
-    json_path = TEMPLATES_DIR / f"{name}.json"
-    if json_path.exists():
-        json_path.unlink()
-        return jsonify({"ok": True, "deleted": str(json_path)})
-    return jsonify({"error": "File template non trovato su disco"}), 404
+    """Soft-delete: imposta is_active=False nel DB."""
+    try:
+        result = db.deactivate_template(name)
+        if result:
+            return jsonify({"ok": True, "deactivated": name})
+        return jsonify({"error": "Template non trovato nel DB"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ──────────────────────── PDF TEST ────────────────────────
