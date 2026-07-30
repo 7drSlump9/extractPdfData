@@ -41,19 +41,29 @@ OCR_TEMPLATE_SAVE_RATIO = 0.8
 
 
 def _collect_all_pages(pdf):
-    """Lines + full_text da tutte le pagine (Y offset cumulativo)."""
+    """Lines + full_text da tutte le pagine (Y offset cumulativo).
+    Coordinate normalizzate in 0-1000 (permille) per portabilità."""
     all_lines = []
     y_offset = 0.0
     text_parts = []
     for page in pdf.pages:
-        # dedupe_chars: alcuni PDF (report legacy) disegnano due volte lo stesso
-        # carattere con un micro-offset per simulare il grassetto (bold-by-double-strike).
         page = page.dedupe_chars(tolerance=1)
+        pw = float(page.width or 0) or 1.0
+        ph = float(page.height or 0) or 1.0
         page_lines = get_lines(page)
         for top, row in page_lines:
-            all_lines.append((top + y_offset, row))
+            # Normalizza in 0-1000
+            norm_top = (top / ph) * 1000.0 + y_offset
+            norm_row = []
+            for w in row:
+                norm_row.append({
+                    **w,
+                    'x0': (w['x0'] / pw) * 1000.0,
+                    'top': (w['top'] / ph) * 1000.0,
+                })
+            all_lines.append((norm_top, norm_row))
         text_parts.append("\n".join(line_text(row) for _, row in page_lines))
-        y_offset += float(page.height or 0) + 10.0
+        y_offset += 1000.0 + 10.0  # offset in unità 0-1000
     return all_lines, "\n".join(text_parts)
 
 
@@ -97,39 +107,19 @@ def _collect_pages_via_ocr(pdf, dpi=PDF_OCR_DPI):
     """
     from image_ocr import collect_lines_from_pil_images
 
-    images = []
-    labels = []
-    sources = []
+    page_images = []
     page_dims = []
     for i, page in enumerate(pdf.pages):
         pw = float(page.width or 0)
         ph = float(page.height or 0)
-        embedded = _embedded_fullpage_image(page)
-        if embedded is not None:
-            images.append(embedded)
-            labels.append(f"pagina {i + 1} (embedded)")
-            sources.append("embedded")
-            page_dims.append((pw, ph))
-        else:
-            page_image = page.to_image(resolution=dpi)
-            images.append(page_image.original.copy())
-            labels.append(f"pagina {i + 1} (render {dpi}dpi)")
-            sources.append("render")
-            page_dims.append((pw, ph))
+        page_image = page.to_image(resolution=dpi)
+        page_images.append(page_image.original.copy())
+        page_dims.append((pw, ph))
 
-    n_emb = sources.count("embedded")
-    n_ren = sources.count("render")
-    print(
-        f"OCR su {len(images)} pagina/e PDF "
-        f"(embedded={n_emb}, render={n_ren})..."
-    )
-    lines, full_text = collect_lines_from_pil_images(images, labels=labels)
-    # Per OCR zonale: render a DPI (stesso orientamento della pagina PDF)
-    page_renders = []
-    for i, page in enumerate(pdf.pages):
-        ri = page.to_image(resolution=dpi)
-        page_renders.append(ri.original.copy())
-    return lines, full_text, list(zip(images, page_dims, page_renders))
+    print(f"OCR su {len(page_images)} pagina/e PDF (render {dpi}dpi)...")
+    lines, full_text = collect_lines_from_pil_images(page_images, labels=[f"pagina {i+1}" for i in range(len(page_images))])
+    # Per OCR zonale: stesse immagini render (coordinate coerenti con OCR globale)
+    return lines, full_text, list(zip(page_images, page_dims, page_images))
 
 
 def _valore_utile(v):

@@ -39,15 +39,19 @@ const HANDLE_POSITIONS = {
   w:  { top: '50%', marginTop: -3, left: -3, cursor: 'w-resize' },
 };
 
-export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1, onHdrResize, onZoneClick, selectedZoneIndex }) {
+export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1, canvasRefWidth = 0, canvasRefHeight = 0, onHdrResize, onZoneClick, selectedZoneIndex }) {
   const [showZones, setShowZones] = useState(true);
   const resizeRef = React.useRef(null);
   if (!template || !scale) return null;
 
-  const toCanvas = (v) => (Number.isFinite(Number(v)) ? Number(v) * scale : 0);
+  // Coordinate template in 0-1000, canvas in pixel. Converti.
+  const canvasW = canvasRefWidth || 1653; // fallback A4 200dpi
+  const canvasH = canvasRefHeight || 2339;
+  const toCanvasX = (v) => (Number.isFinite(Number(v)) ? Number(v) / 1000 * canvasW : 0);
+  const toCanvasY = (v) => (Number.isFinite(Number(v)) ? Number(v) / 1000 * canvasH : 0);
   const cssScaleX = canvasScaleX || 1;
   const cssScaleY = canvasScaleY || 1;
-  const offsetY = toCanvas(yOffset);
+  const offsetY = toCanvasY(yOffset);
 
   const cssLeft = (v) => (Number.isFinite(Number(v)) ? Number(v) / cssScaleX : 0);
   const cssTop = (v) => (Number.isFinite(Number(v)) ? Number(v) / cssScaleY : 0);
@@ -93,18 +97,18 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
   // --- Header section ---
   const hdr = template.header;
   if (hdr) {
-    const hdrY = toCanvas(hdr.y_min ?? 0) + offsetY;
-    const hdrH = Math.max(Math.abs(toCanvas(hdr.y_max ?? 200) - toCanvas(hdr.y_min ?? 0)), 10);
+    const hdrY = toCanvasY(hdr.y_min ?? 0) + offsetY;
+    const hdrH = Math.max(Math.abs(toCanvasY(hdr.y_max ?? 200) - toCanvasY(hdr.y_min ?? 0)), 10);
     sections.push({
       key: 'sec-hdr', x: 0, w: 9999, y: hdrY, h: hdrH,
       bg: SECTION_COLORS.header.bg, border: SECTION_COLORS.header.border,
       label: 'HEADER',
     });
     (hdr.fields || []).forEach((f, idx) => {
-      const x = toCanvas(f.x_min ?? 0);
-      const y = toCanvas(f.y_min ?? 0) + offsetY;
-      const w = Math.max(Math.abs(toCanvas(f.x_max ?? 200) - x), 20);
-      const h = Math.max(Math.abs(toCanvas(f.y_max ?? 100) - y), 10);
+      const x = toCanvasX(f.x_min ?? 0);
+      const y = toCanvasY(f.y_min ?? 0) + offsetY;
+      const w = Math.max(Math.abs(toCanvasX(f.x_max ?? 200) - x), 20);
+      const h = Math.max(Math.abs(toCanvasY(f.y_max ?? 100) - y), 10);
       zones.push({
         key: `h-${idx}`, x, y, w, h,
         color: COLORS[idx % COLORS.length],
@@ -117,16 +121,16 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
   // --- Table section ---
   const tbl = template.table;
   if (tbl) {
-    const tblY = toCanvas(tbl.y_min ?? 200) + offsetY;
-    const tblH = Math.max(Math.abs(toCanvas(tbl.y_max ?? 600) - tblY), 10);
+    const tblY = toCanvasY(tbl.y_min ?? 200) + offsetY;
+    const tblH = Math.max(Math.abs(toCanvasY(tbl.y_max ?? 600) - toCanvasY(tbl.y_min ?? 200)), 10);
     sections.push({
       key: 'sec-tbl', x: 0, w: 9999, y: tblY, h: tblH,
       bg: SECTION_COLORS.table.bg, border: SECTION_COLORS.table.border,
       label: 'TABLE',
     });
     (tbl.columns || []).forEach((col, idx) => {
-      const x = toCanvas(col.x_min ?? (100 + idx * 80));
-      const w = Math.max(Math.abs(toCanvas(col.x_max ?? (180 + idx * 80)) - x), 30);
+      const x = toCanvasX(col.x_min ?? (100 + idx * 80));
+      const w = Math.max(Math.abs(toCanvasX(col.x_max ?? (180 + idx * 80)) - x), 30);
       zones.push({
         key: `c-${idx}`, x, y: tblY, w, h: tblH,
         color: COLORS[(hdr?.fields?.length || 0 + idx) % COLORS.length],
@@ -139,16 +143,16 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
   // --- Footer section ---
   const ftr = template.footer;
   if (ftr) {
-    const ftrY = toCanvas(ftr.y_min ?? 600) + offsetY;
-    const ftrH = Math.max(Math.abs(toCanvas(ftr.y_max ?? 800) - ftrY), 10);
+    const ftrY = toCanvasY(ftr.y_min ?? 600) + offsetY;
+    const ftrH = Math.max(Math.abs(toCanvasY(ftr.y_max ?? 800) - toCanvasY(ftr.y_min ?? 600)), 10);
     sections.push({
       key: 'sec-ftr', x: 0, w: 9999, y: ftrY, h: ftrH,
       bg: SECTION_COLORS.footer.bg, border: SECTION_COLORS.footer.border,
       label: 'FOOTER',
     });
     (ftr.fields || []).forEach((f, idx) => {
-      const x = toCanvas(f.x_min ?? 0);
-      const w = Math.max(Math.abs(toCanvas(f.x_max ?? 200) - x), 20);
+      const x = toCanvasX(f.x_min ?? 0);
+      const w = Math.max(Math.abs(toCanvasX(f.x_max ?? 200) - x), 20);
       zones.push({
         key: `f-${idx}`, x, y: ftrY, w, h: ftrH,
         color: COLORS[idx % COLORS.length],
@@ -210,12 +214,11 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
                 const idx = parseInt(z.key.split('-')[1], 10);
                 e.dataTransfer.setData('application/tag-index', String(idx));
                 e.dataTransfer.effectAllowed = 'move';
-                // Drag ghost con le stesse proporzioni del rettangolo
                 if (z.w > 0 && z.h > 0) {
                   const ghost = document.createElement('canvas');
-                  const scale = Math.min(100 / z.w, 1);
-                  ghost.width = Math.max(z.w * scale, 20);
-                  ghost.height = Math.max(z.h * scale, 10);
+                  const s = Math.min(100 / z.w, 1);
+                  ghost.width = Math.max(z.w * s, 20);
+                  ghost.height = Math.max(z.h * s, 10);
                   const ctx = ghost.getContext('2d');
                   ctx.fillStyle = 'rgba(59,130,246,0.4)';
                   ctx.fillRect(0, 0, ghost.width, ghost.height);
@@ -246,7 +249,6 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
               }}>
                 {z.label}
               </span>
-              {/* Resize handles solo per header fields */}
               {z.key.startsWith('h-') && parseInt(z.key.split('-')[1], 10) === selectedZoneIndex && Object.entries(HANDLE_POSITIONS).map(([hKey, hStyle]) => (
                 <div
                   key={hKey}

@@ -133,12 +133,11 @@ def extract_header_field(config, full_text, lines, page_images=None):
                             ocr_img = ocr_img.transpose(Image.ROTATE_270 if img_landscape else Image.ROTATE_90)
                     if ocr_img is not None and hasattr(ocr_img, 'size'):
                         iw_img, ih_img = ocr_img.size
-                        ratio_x = iw_img / pw if pw > 0 else 1
-                        ratio_y = ih_img / ph if ph > 0 else 1
-                        ix = int(x_min * ratio_x)
-                        iy = int(y_min * ratio_y)
-                        iw = int((x_max - x_min) * ratio_x)
-                        ih = int((y_max - y_min) * ratio_y)
+                        # Template in 0-1000, converti in pixel immagine
+                        ix = int(x_min / 1000.0 * iw_img)
+                        iy = int(y_min / 1000.0 * ih_img)
+                        iw = int((x_max - x_min) / 1000.0 * iw_img)
+                        ih = int((y_max - y_min) / 1000.0 * ih_img)
                         try:
                             text = ocr_zone(ocr_img, ix, iy, iw, ih)
                             if text:
@@ -420,7 +419,7 @@ def extract_table(table_config, lines):
         if skip_pattern and skip_pattern.match(text.strip()):
             continue
 
-        if row_pattern.match(text):
+        if row_pattern.search(text):
             flush()
             current_tokens = {
                 col['name']: words_in_range(row_words, col['x_min'], col['x_max'])

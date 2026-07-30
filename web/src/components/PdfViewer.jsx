@@ -116,12 +116,13 @@ export default function PdfViewer({ file, template, onTagDrop, onHdrResize, onZo
             const scaleY = canvas.height / rect.height;
             const canvasX = (e.clientX - rect.left) * scaleX;
             const canvasY = (e.clientY - rect.top) * scaleY;
-            const pdfX = Math.round(canvasX / scale);
-            const pdfY = Math.round(canvasY / scale) - yOffset;
+            // Converti in coordinate 0-1000 (permille)
+            const pdfX = Math.round((canvasX / canvas.width) * 1000);
+            const pdfY = Math.round((canvasY / canvas.height) * 1000) - yOffset;
             onTagDrop(index, pdfX, pdfY);
           }}
         />
-        <ZoneOverlay template={template} scale={scale} yOffset={yOffset} canvasScaleX={canvasScaleX} canvasScaleY={canvasScaleY} onHdrResize={onHdrResize} onZoneClick={onZoneClick} selectedZoneIndex={selectedZoneIndex} />
+        <ZoneOverlay template={template} scale={scale} yOffset={yOffset} canvasScaleX={canvasScaleX} canvasScaleY={canvasScaleY} canvasRefWidth={canvasRef.current?.width || 0} canvasRefHeight={canvasRef.current?.height || 0} onHdrResize={onHdrResize} onZoneClick={onZoneClick} selectedZoneIndex={selectedZoneIndex} />
       </div>
     </div>
   );

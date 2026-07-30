@@ -197,6 +197,7 @@ export default function TemplateEditor({ username, onLogout }) {
   const [message, setMessage] = useState('');
   const [msgOk, setMsgOk] = useState(true);
   const [openHdrIdx, setOpenHdrIdx] = useState(null);
+  const [openColIdx, setOpenColIdx] = useState(null);
   const pdfRef = useRef(null);
   const tplRef = useRef(null);
 
@@ -553,14 +554,65 @@ export default function TemplateEditor({ username, onLogout }) {
                     <button onClick={() => updTableY('y_max', (template.table?.y_max || 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                   </div>
                 </div>
-                {(template.table?.columns || []).map((c, i) => (
-                  <div key={i} style={css.row}>
-                    <input value={c.header || ''} onChange={e => updCol(i, 'header', e.target.value)} placeholder="hdr" style={{ ...css.inp, maxWidth: 55 }} />
-                    <input value={c.regex || ''} onChange={e => updCol(i, 'regex', e.target.value)} placeholder="regex" style={{ ...css.inp, maxWidth: 70 }} />
-                    <span style={css.tag}>x{Number(c.x_min)?.toFixed(0)}-{Number(c.x_max)?.toFixed(0)}</span>
-                    <button onClick={() => delCol(i)} style={{ ...css.btn3, fontSize: 14, padding: '4px 8px' }}>x</button>
-                  </div>
-                ))}
+                <div style={{ display: 'flex', gap: 4, marginBottom: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: 10, color: '#94a3b8' }}>Layout:</span>
+                  <select value={template.table?.layout || 'rows'} onChange={e => updTableStr('layout', e.target.value)} style={{ fontSize: 11, padding: '2px 4px', background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 4 }}>
+                    <option value="rows">rows (normale)</option>
+                    <option value="side_by_side_items">side_by_side (articoli affiancati)</option>
+                  </select>
+                </div>
+                {(template.table?.columns || []).map((c, i) => {
+                  const isOpen = openColIdx === i;
+                  return (
+                    <div key={i} style={{ marginBottom: 4, background: '#1e293b', borderRadius: 6, overflow: 'hidden' }}>
+                      {/* Colonna riga compatta */}
+                      <div
+                        onClick={() => setOpenColIdx(isOpen ? null : i)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <span style={{ fontSize: 10, color: '#94a3b8', transition: 'transform 0.15s', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                          ❯
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', flex: 1 }}>
+                          {c.header || `col ${i + 1}`}
+                        </span>
+                        <span style={{ fontSize: 10, color: '#64748b', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.regex || '—'}
+                        </span>
+                        <span style={css.tag}>x{Number(c.x_min)?.toFixed(0)}-{Number(c.x_max)?.toFixed(0)}</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); delCol(i); }}
+                          style={{ ...css.btn3, fontSize: 14, padding: '4px 8px', flexShrink: 0 }}
+                        >✕</button>
+                      </div>
+                      {/* Pannello espanso */}
+                      {isOpen && (
+                        <div style={{ padding: '6px 8px 8px 20px', borderTop: '1px solid #334155' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '50px 1fr', gap: '4px 8px', fontSize: 11, alignItems: 'center' }}>
+                            <span style={{ color: '#94a3b8' }}>Header</span>
+                            <input value={c.header || ''} onChange={e => updCol(i, 'header', e.target.value)} placeholder="nome colonna" style={{ fontSize: 11, width: '100%' }} />
+                            <span style={{ color: '#94a3b8' }}>Pattern</span>
+                            <input value={c.regex || ''} onChange={e => updCol(i, 'regex', e.target.value)} placeholder="regex pattern" style={{ fontSize: 11, width: '100%' }} />
+                            <span style={{ color: '#94a3b8' }}>X</span>
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <button onClick={() => updCol(i, 'x_min', (c.x_min ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <input type="number" value={c.x_min ?? 0} onChange={e => updCol(i, 'x_min', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
+                                <button onClick={() => updCol(i, 'x_min', (c.x_min ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                              </div>
+                              <span style={{ color: '#64748b', fontSize: 10 }}>→</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <button onClick={() => updCol(i, 'x_max', (c.x_max ?? 0) - 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <input type="number" value={c.x_max ?? 0} onChange={e => updCol(i, 'x_max', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
+                                <button onClick={() => updCol(i, 'x_max', (c.x_max ?? 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 <input value={template.table?.start_after_contains || ''} onChange={e => updTableStr('start_after_contains', e.target.value)} placeholder="Start after (virgola)" style={{ width: '100%', marginTop: 4, fontSize: 11 }} />
                 <input value={(template.table?.end_markers || []).join(', ')} onChange={e => updTableStr('end_markers', e.target.value.split(',').map(s => s.trim()))} placeholder="End markers (virgola)" style={{ width: '100%', marginTop: 2, fontSize: 11 }} />
                 <input value={template.table?.row_detect_pattern || ''} onChange={e => updTableStr('row_detect_pattern', e.target.value)} placeholder="Row detect regex" style={{ width: '100%', marginTop: 2, fontSize: 11 }} />

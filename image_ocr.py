@@ -126,7 +126,7 @@ def _ocr_raw(image: Image.Image, lang: str = "ita+eng"):
         raise
 
 
-def _data_to_words(data):
+def _data_to_words(data, img_width=None, img_height=None):
     words = []
     confs = []
     n = len(data["text"])
@@ -142,10 +142,17 @@ def _data_to_words(data):
             continue
         if conf >= 0:
             confs.append(conf)
+        x0 = float(data["left"][i])
+        top = float(data["top"][i])
+        # Normalizza coordinate in 0-1000 (permille) per portabilità
+        if img_width and img_width > 0:
+            x0 = x0 / img_width * 1000.0
+        if img_height and img_height > 0:
+            top = top / img_height * 1000.0
         words.append({
             "text": text,
-            "x0": float(data["left"][i]),
-            "top": float(data["top"][i]),
+            "x0": x0,
+            "top": top,
         })
     return words, confs
 
@@ -180,7 +187,8 @@ def _best_orientation(image: Image.Image, lang: str = "ita+eng"):
     for degrees in (0, 90, 180, 270):
         rotated = _rotate(image, degrees)
         data = _ocr_raw(rotated, lang=lang)
-        words, confs = _data_to_words(data)
+        rw, rh = rotated.size
+        words, confs = _data_to_words(data, img_width=rw, img_height=rh)
         score = _score_orientation(words, confs)
         if best is None or score > best[0]:
             best = (score, degrees, rotated, words)
