@@ -206,6 +206,7 @@ export default function TemplateEditor({ username, onLogout }) {
   const [msgOk, setMsgOk] = useState(true);
   const [openHdrIdx, setOpenHdrIdx] = useState(null);
   const [openColIdx, setOpenColIdx] = useState(null);
+  const [openFtrIdx, setOpenFtrIdx] = useState(null);
   const pdfRef = useRef(null);
   const tplRef = useRef(null);
 
@@ -316,6 +317,31 @@ export default function TemplateEditor({ username, onLogout }) {
     const newCols = [...cols];
     newCols[index] = { ...newCols[index], ...newCol };
     setTemplate({ ...template, table: { ...template.table, columns: newCols } });
+  };
+
+  const handleFtrTagDrop = (index, pdfX, pdfY) => {
+    const fields = template?.footer?.fields;
+    if (!fields || index >= fields.length) return;
+    const f = fields[index];
+    const w = Math.max((f.x_max ?? 0) - (f.x_min ?? 0), 0);
+    const h = Math.max((f.y_max ?? 0) - (f.y_min ?? 0), 0);
+    const useW = w > 0 ? w : 100;
+    const useH = h > 0 ? h : 20;
+    const newFields = [...fields];
+    newFields[index] = {
+      ...newFields[index],
+      x_min: pdfX, y_min: pdfY,
+      x_max: pdfX + useW, y_max: pdfY + useH,
+    };
+    setTemplate({ ...template, footer: { ...template.footer, fields: newFields } });
+  };
+
+  const handleFtrResize = (index, newField) => {
+    const fields = template?.footer?.fields;
+    if (!fields || index >= fields.length) return;
+    const newFields = [...fields];
+    newFields[index] = { ...newFields[index], ...newField };
+    setTemplate({ ...template, footer: { ...template.footer, fields: newFields } });
   };
 
   // --- Table helpers ---
@@ -647,23 +673,90 @@ export default function TemplateEditor({ username, onLogout }) {
                     <button onClick={() => updFtrY('y_max', (template.footer?.y_max || 0) + 10)} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
                   </div>
                 </div>
-                {(template.footer?.fields || []).map((f, i) => (
-                  <div key={i} style={css.row}>
-                    <input value={f.field || ''} onChange={e => updFtr(i, 'field', e.target.value)} placeholder="nome" style={{ ...css.inp, maxWidth: 70 }} />
-                    <input value={f.regex || ''} onChange={e => updFtr(i, 'regex', e.target.value)} placeholder="regex" style={{ ...css.inp, maxWidth: 90 }} />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <button onClick={() => { updFtr(i, 'x_min', (f.x_min ?? 0) - 5); updFtr(i, 'x_max', (f.x_max ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
-                      <input type="number" value={f.x_min ?? 0} onChange={e => updFtr(i, 'x_min', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                      <button onClick={() => { updFtr(i, 'x_min', (f.x_min ?? 0) + 5); updFtr(i, 'x_max', (f.x_max ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                {(template.footer?.fields || []).map((f, i) => {
+                  const isOpen = openFtrIdx === i;
+                  return (
+                    <div
+                      key={i}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('application/tag-index', String(i));
+                        e.dataTransfer.effectAllowed = 'move';
+                        const w = Math.max((f.x_max ?? 0) - (f.x_min ?? 0), 20);
+                        const h = Math.max((f.y_max ?? 0) - (f.y_min ?? 0), 10);
+                        const ghost = document.createElement('canvas');
+                        const s = Math.min(100 / w, 1);
+                        ghost.width = Math.max(w * s, 20);
+                        ghost.height = Math.max(h * s, 10);
+                        const ctx = ghost.getContext('2d');
+                        ctx.fillStyle = 'rgba(239,68,68,0.4)';
+                        ctx.fillRect(0, 0, ghost.width, ghost.height);
+                        ctx.strokeStyle = '#ef4444';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(0, 0, ghost.width, ghost.height);
+                        e.dataTransfer.setDragImage(ghost, 0, 0);
+                      }}
+                      style={{ marginBottom: 4, background: '#1e293b', borderRadius: 6, overflow: 'hidden' }}
+                    >
+                      <div
+                        onClick={() => setOpenFtrIdx(isOpen ? null : i)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <span style={{ fontSize: 10, color: '#94a3b8', transition: 'transform 0.15s', transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                          ❯
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', flex: 1 }}>
+                          {f.field || `tag ${i + 1}`}
+                        </span>
+                        <span style={{ fontSize: 10, color: '#64748b', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {f.regex || '—'}
+                        </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); delFtr(i); }}
+                          style={{ ...css.btn3, fontSize: 14, padding: '4px 8px', flexShrink: 0 }}
+                        >✕</button>
+                      </div>
+                      {isOpen && (
+                        <div style={{ padding: '6px 8px 8px 20px', borderTop: '1px solid #334155' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '50px 1fr', gap: '4px 8px', fontSize: 11, alignItems: 'center' }}>
+                            <span style={{ color: '#94a3b8' }}>Nome</span>
+                            <input value={f.field || ''} onChange={e => updFtr(i, 'field', e.target.value)} placeholder="nome campo" style={{ fontSize: 11, width: '100%' }} />
+                            <span style={{ color: '#94a3b8' }}>Pattern</span>
+                            <input value={f.regex || ''} onChange={e => updFtr(i, 'regex', e.target.value)} placeholder="regex pattern" style={{ fontSize: 11, width: '100%' }} />
+                            <span style={{ color: '#94a3b8' }}>X</span>
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <button onClick={() => { updFtr(i, 'x_min', (f.x_min ?? 0) - 5); updFtr(i, 'x_max', (f.x_max ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <input type="number" value={f.x_min ?? 0} onChange={e => updFtr(i, 'x_min', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
+                                <button onClick={() => { updFtr(i, 'x_min', (f.x_min ?? 0) + 5); updFtr(i, 'x_max', (f.x_max ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                              </div>
+                              <span style={{ color: '#64748b', fontSize: 10 }}>→</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <button onClick={() => { updFtr(i, 'x_max', (f.x_max ?? 0) - 5); updFtr(i, 'x_min', (f.x_min ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <input type="number" value={f.x_max ?? 0} onChange={e => updFtr(i, 'x_max', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
+                                <button onClick={() => { updFtr(i, 'x_max', (f.x_max ?? 0) + 5); updFtr(i, 'x_min', (f.x_min ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                              </div>
+                            </div>
+                            <span style={{ color: '#94a3b8' }}>Y</span>
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <button onClick={() => { updFtr(i, 'y_min', (f.y_min ?? 0) - 5); updFtr(i, 'y_max', (f.y_max ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <input type="number" value={f.y_min ?? 0} onChange={e => updFtr(i, 'y_min', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
+                                <button onClick={() => { updFtr(i, 'y_min', (f.y_min ?? 0) + 5); updFtr(i, 'y_max', (f.y_max ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                              </div>
+                              <span style={{ color: '#64748b', fontSize: 10 }}>→</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <button onClick={() => { updFtr(i, 'y_max', (f.y_max ?? 0) - 5); updFtr(i, 'y_min', (f.y_min ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
+                                <input type="number" value={f.y_max ?? 0} onChange={e => updFtr(i, 'y_max', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
+                                <button onClick={() => { updFtr(i, 'y_max', (f.y_max ?? 0) + 5); updFtr(i, 'y_min', (f.y_min ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <button onClick={() => { updFtr(i, 'x_max', (f.x_max ?? 0) - 5); updFtr(i, 'x_min', (f.x_min ?? 0) - 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>−</button>
-                      <input type="number" value={f.x_max ?? 0} onChange={e => updFtr(i, 'x_max', Number(e.target.value))} style={{ width: 40, fontSize: 11, textAlign: 'center', padding: '1px 2px' }} />
-                      <button onClick={() => { updFtr(i, 'x_max', (f.x_max ?? 0) + 5); updFtr(i, 'x_min', (f.x_min ?? 0) + 5); }} style={{ ...css.btn4, fontSize: 12, padding: '2px 6px', lineHeight: 1 }}>+</button>
-                    </div>
-                    <button onClick={() => delFtr(i)} style={{ ...css.btn3, fontSize: 14, padding: '4px 8px' }}>x</button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Signature */}
@@ -712,7 +805,7 @@ Signature: ${(template.signature || []).join(', ') || '-'}`}
           </div>
           <div style={css.dropArea} onDragOver={e => e.preventDefault()} onDrop={handleDrop}>
             {pdfFile ? (
-              <PdfViewer file={pdfFile} template={template} onTagDrop={handleTagDrop} onHdrResize={handleHdrResize} onColResize={handleColResize} onZoneClick={(idx) => setOpenHdrIdx(idx === openHdrIdx ? null : idx)} selectedZoneIndex={openHdrIdx} />
+              <PdfViewer file={pdfFile} template={template} onTagDrop={handleTagDrop} onHdrResize={handleHdrResize} onColResize={handleColResize} onFtrDrop={handleFtrTagDrop} onFtrResize={handleFtrResize} onZoneClick={(idx) => setOpenHdrIdx(idx === openHdrIdx ? null : idx)} selectedZoneIndex={openHdrIdx} onFtrZoneClick={(idx) => setOpenFtrIdx(idx === openFtrIdx ? null : idx)} selectedFtrZoneIndex={openFtrIdx} />
             ) : (
               <div style={css.dropBox}>
                 <div style={{ fontSize: 40, marginBottom: 8 }}>.</div>

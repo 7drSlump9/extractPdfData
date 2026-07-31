@@ -39,7 +39,7 @@ const HANDLE_POSITIONS = {
   w:  { top: '50%', marginTop: -3, left: -3, cursor: 'w-resize' },
 };
 
-export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1, canvasRefWidth = 0, canvasRefHeight = 0, onHdrResize, onColResize, onZoneClick, selectedZoneIndex }) {
+export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX = 1, canvasScaleY = 1, canvasRefWidth = 0, canvasRefHeight = 0, onHdrResize, onColResize, onFtrResize, onZoneClick, selectedZoneIndex, onFtrZoneClick, selectedFtrZoneIndex }) {
   const [showZones, setShowZones] = useState(true);
   const resizeRef = React.useRef(null);
   if (!template || !scale) return null;
@@ -87,6 +87,37 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
     };
 
     resizeRef.current = { onMove, onUp };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  // Resize handler per footer (stesso header)
+  const handleFtrResizeStart = (e, fieldIdx, handle) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const fields = template?.footer?.fields;
+    if (!fields || fieldIdx >= fields.length) return;
+    const f = fields[fieldIdx];
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const origField = { ...f };
+
+    const onMove = (ev) => {
+      const dx = (ev.clientX - startX) / (cssScaleX * scale);
+      const dy = (ev.clientY - startY) / (cssScaleY * scale);
+      const newField = { ...f };
+      if (handle.includes('n')) newField.y_min = Math.round(origField.y_min + dy);
+      if (handle.includes('s')) newField.y_max = Math.round(origField.y_max + dy);
+      if (handle.includes('w')) newField.x_min = Math.round(origField.x_min + dx);
+      if (handle.includes('e')) newField.x_max = Math.round(origField.x_max + dx);
+      if (onFtrResize) onFtrResize(fieldIdx, newField);
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   };
@@ -179,9 +210,11 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
     });
     (ftr.fields || []).forEach((f, idx) => {
       const x = toCanvasX(f.x_min ?? 0);
+      const y = toCanvasY(f.y_min ?? ftr.y_min) + offsetY;
       const w = Math.max(Math.abs(toCanvasX(f.x_max ?? 200) - x), 20);
+      const h = Math.max(Math.abs(toCanvasY(f.y_max ?? ftr.y_max) - toCanvasY(f.y_min ?? ftr.y_min)), 10);
       zones.push({
-        key: `f-${idx}`, x, y: ftrY, w, h: ftrH,
+        key: `f-${idx}`, x, y, w, h,
         color: COLORS[idx % COLORS.length],
         border: BORDERS[idx % BORDERS.length],
         label: (f.field || f.regex || `f${idx}`).substring(0, 20),
@@ -228,16 +261,22 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
           ))}
 
           {/* Field/column zones */}
-          {zones.map(z => (
+          {zones.map(z => {
+            const isHdr = z.key.startsWith('h-');
+            const isFtr = z.key.startsWith('f-');
+            const isDraggable = isHdr || isFtr;
+            const isSelected = (isHdr && parseInt(z.key.split('-')[1], 10) === selectedZoneIndex) || (isFtr && parseInt(z.key.split('-')[1], 10) === selectedFtrZoneIndex);
+            return (
             <div
               key={z.key}
-              draggable={z.key.startsWith('h-')}
-              onClick={z.key.startsWith('h-') ? (e) => {
+              draggable={isDraggable}
+              onClick={isDraggable ? (e) => {
                 e.stopPropagation();
                 const idx = parseInt(z.key.split('-')[1], 10);
-                if (onZoneClick) onZoneClick(idx);
+                if (isHdr && onZoneClick) onZoneClick(idx);
+                if (isFtr && onFtrZoneClick) onFtrZoneClick(idx);
               } : undefined}
-              onDragStart={z.key.startsWith('h-') ? (e) => {
+              onDragStart={isDraggable ? (e) => {
                 const idx = parseInt(z.key.split('-')[1], 10);
                 e.dataTransfer.setData('application/tag-index', String(idx));
                 e.dataTransfer.effectAllowed = 'move';
@@ -262,7 +301,7 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
                 border: `2px solid ${z.border}`,
                 backgroundColor: z.color,
                 pointerEvents: 'auto',
-                cursor: z.key.startsWith('h-') ? 'grab' : 'default',
+                cursor: isDraggable ? 'grab' : 'default',
                 fontSize: 10,
                 zIndex: 20,
               }}
@@ -276,7 +315,7 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
               }}>
                 {z.label}
               </span>
-              {z.key.startsWith('h-') && parseInt(z.key.split('-')[1], 10) === selectedZoneIndex && Object.entries(HANDLE_POSITIONS).map(([hKey, hStyle]) => (
+              {(isHdr && parseInt(z.key.split('-')[1], 10) === selectedZoneIndex) && Object.entries(HANDLE_POSITIONS).map(([hKey, hStyle]) => (
                 <div
                   key={hKey}
                   onMouseDown={(e) => {
@@ -322,8 +361,31 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
                   />
                 );
               })}
+              {/* Maniglie resize per footer (stesso comportamento header) */}
+              {isFtr && parseInt(z.key.split('-')[1], 10) === selectedFtrZoneIndex && Object.entries(HANDLE_POSITIONS).map(([hKey, hStyle]) => (
+                <div
+                  key={hKey}
+                  onMouseDown={(e) => {
+                    const idx = parseInt(z.key.split('-')[1], 10);
+                    handleFtrResizeStart(e, idx, hKey);
+                  }}
+                  style={{
+                    ...RESIZE_HANDLE.style,
+                    width: RESIZE_HANDLE.size,
+                    height: RESIZE_HANDLE.size,
+                    cursor: hStyle.cursor,
+                    top: hStyle.top,
+                    left: hStyle.left,
+                    right: hStyle.right,
+                    bottom: hStyle.bottom,
+                    marginTop: hStyle.marginTop,
+                    marginLeft: hStyle.marginLeft,
+                  }}
+                />
+              ))}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </>
