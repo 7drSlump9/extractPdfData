@@ -7,10 +7,6 @@ Sorgenti layout (policy diverse):
   - ocr_pdf    : PDF scansionato / sola immagine (-eo fallback OCR)
   - ocr_image  : foto (-eoi)
 
-PDF nativo: prompt AI "native", template salvato in templates/ (gate leggero).
-OCR: prompt AI "ocr", template salvato solo se quality-gate STRETTO
-(altrimenti dati AI one-shot senza inquinare templates/).
-
 Uso:
     python main.py -customer "Nome Cliente" [-templateName "NOME"] [-outputTemplatePath "PATH"] [-append] -eo <path_pdf>
     python main.py -customer "Nome Cliente" [-templateName "NOME"] [-outputTemplatePath "PATH"] [-append] -eoi <img1> [img2 ...]
@@ -25,16 +21,21 @@ import pdfplumber
 from template_engine import get_lines, line_text, match_template, apply_template
 from db import db
 
-TEMPLATES_DIR = Path(__file__).parent / "templates"
-# Template da OCR che passano il gate stretto (non auto-promossi in root)
-TEMPLATES_DRAFT_OCR_DIR = TEMPLATES_DIR / "draft_ocr"
+# Carica configurazione da config.json (condiviso con frontend)
+CONFIG_PATH = Path(__file__).parent / "web" / "src" / "config.json"
+_config = {}
+if CONFIG_PATH.exists():
+    try:
+        _config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
 
 # Sotto questa soglia di caratteri utili il PDF e' considerato "senza testo"
 # (scansione / sola immagine) e si tenta l'OCR.
 MIN_NATIVE_TEXT_CHARS = 20
 
-# Risoluzione render pagine PDF per OCR (dpi). 200 bilancia qualita'/tempo.
-PDF_OCR_DPI = 200
+# Risoluzione render pagine PDF per OCR (dpi). Default 200 se non in config.
+PDF_OCR_DPI = int(_config.get("ocrDpi", 200))
 
 # Gate OCR: frazione minima righe utili motore vs AI per salvare template
 OCR_TEMPLATE_SAVE_RATIO = 0.8
@@ -118,7 +119,6 @@ def _collect_pages_via_ocr(pdf, dpi=PDF_OCR_DPI):
 
     print(f"OCR su {len(page_images)} pagina/e PDF (render {dpi}dpi)...")
     lines, full_text = collect_lines_from_pil_images(page_images, labels=[f"pagina {i+1}" for i in range(len(page_images))])
-    # Per OCR zonale: stesse immagini render (coordinate coerenti con OCR globale)
     return lines, full_text, list(zip(page_images, page_dims, page_images))
 
 
@@ -150,7 +150,6 @@ def _riga_has_identity(riga):
     for k in keys:
         if k in riga and _valore_utile(riga.get(k)):
             return True
-    # fallback: qualsiasi campo testuale non numerico lungo
     for k, v in riga.items():
         if not _valore_utile(v):
             continue
@@ -168,7 +167,7 @@ def _identity_ratio(righe):
 
 
 def _attach_meta(dati, *, source, extraction_mode, template_saved, generato_da_ai,
-                 q_ai=None, q_motore=None, template_path=None, customer_name=None):
+                 q_ai=None, q_motore=None, customer_name=None):
     out = dict(dati or {})
     out["source"] = source
     out["extraction_mode"] = extraction_mode
@@ -183,8 +182,6 @@ def _attach_meta(dati, *, source, extraction_mode, template_saved, generato_da_a
         quality["righe_utili_ai"] = q_ai
     if q_motore is not None:
         quality["righe_utili_motore"] = q_motore
-    if template_path is not None:
-        quality["template_path"] = str(template_path)
     out["quality"] = quality
     return out
 
@@ -199,14 +196,12 @@ def _pack_ai_dati(dati_ai, template):
 
 def _match_or_none(lines, full_text, customer_name="UNKNOWN", fuzzy=False, page_images=None):
     min_ratio = 0.5 if fuzzy else 1.0
-    # Prima cerca nel DB per customer specifico
     db_templates = db.get_all_templates(customer_name=customer_name)
     template = match_template(db_templates, full_text, min_match_ratio=min_ratio)
     if template:
         return apply_template(template, lines, full_text, page_images=page_images), template
-    # Se non trovato, cerca in tutti i template DB (customer puo' variare)
     if customer_name != "UNKNOWN":
-        all_db_templates = db.get_all_templates()  # tutti
+        all_db_templates = db.get_all_templates()
         template = match_template(all_db_templates, full_text, min_match_ratio=min_ratio)
         if template:
             return apply_template(template, lines, full_text, page_images=page_images), template
@@ -223,20 +218,16 @@ def _bootstrap_ai(lines, full_text, mode, customer_name="UNKNOWN", template_name
         )
     print("Formato non riconosciuto da nessun template esistente.")
     print(f"Interpello l'AI (mode={mode}) per dedurre template/dati...")
-    from ai_bootstrap import bootstrap_new_template, save_template
+    from ai_bootstrap import bootstrap_new_template
 
     dati_ai, nuovo_template = bootstrap_new_template(lines, full_text, mode=mode)
     if template_name:
         nuovo_template["name"] = template_name
         print(f"Nome template forzato a: {template_name}")
-    return dati_ai, nuovo_template, save_template, customer_name
+    return dati_ai, nuovo_template
 
 
 def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", template_name=None):
-    """
-    PDF testo digitale: prompt native, template in templates/ (gate leggero).
-    Ritorna dati (con meta).
-    """
     matched = _match_or_none(lines, full_text, customer_name=customer_name)
     if matched is not None:
         dati, template = matched
@@ -250,14 +241,12 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", t
             customer_name=customer_name,
         )
 
-    dati_ai, nuovo_template, save_template, customer_name = _bootstrap_ai(
+    dati_ai, nuovo_template = _bootstrap_ai(
         lines, full_text, mode="native", customer_name=customer_name, template_name=template_name
     )
-    saved_path = save_template(nuovo_template, TEMPLATES_DIR)
     db.save_template(nuovo_template, customer_name)
-    print(f"Nuovo template (native) salvato in: {saved_path}")
+    print("Nuovo template (native) salvato nel DB.")
 
-    # Riapplica template: i dati AI non provano che il template funzioni.
     dati = apply_template(nuovo_template, lines, full_text)
     q_ai = _righe_quality(dati_ai.get("righe", []))
     q_motore = _righe_quality(dati.get("righe", []))
@@ -268,7 +257,7 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", t
         print(
             f"ATTENZIONE: template native debole "
             f"(AI {q_ai}/{righe_ai} utili, motore {q_motore}/{righe_motore}). "
-            f"Uso dati AI per questo documento; controlla {saved_path}."
+            f"Uso dati AI per questo documento."
         )
         packed = _pack_ai_dati(dati_ai, nuovo_template)
         return _attach_meta(
@@ -279,15 +268,13 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", t
             generato_da_ai=True,
             q_ai=q_ai,
             q_motore=q_motore,
-            template_path=saved_path,
             customer_name=customer_name,
         )
 
     if q_motore < q_ai or righe_motore != righe_ai:
         print(
             f"ATTENZIONE: template native da verificare "
-            f"(motore {q_motore}/{righe_motore}, AI {q_ai}/{righe_ai}). "
-            f"Controlla {saved_path}."
+            f"(motore {q_motore}/{righe_motore}, AI {q_ai}/{righe_ai})."
         )
 
     return _attach_meta(
@@ -298,17 +285,11 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", t
         generato_da_ai=True,
         q_ai=q_ai,
         q_motore=q_motore,
-        template_path=saved_path,
         customer_name=customer_name,
     )
 
 
 def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", template_name=None, page_images=None):
-    """
-    OCR (foto o PDF scansionato): prompt ocr.
-    Template salvato in draft_ocr/ SOLO se gate stretto; altrimenti ai_oneshot.
-    """
-    # Prova match esatto, poi fuzzy (50% firme bastano) per OCR rumoroso
     matched = _match_or_none(lines, full_text, customer_name=customer_name, page_images=page_images)
     if matched is None:
         matched = _match_or_none(lines, full_text, customer_name=customer_name, fuzzy=True, page_images=page_images)
@@ -324,7 +305,7 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", t
             customer_name=customer_name,
         )
 
-    dati_ai, nuovo_template, save_template, customer_name = _bootstrap_ai(
+    dati_ai, nuovo_template = _bootstrap_ai(
         lines, full_text, mode="ocr", customer_name=customer_name, template_name=template_name
     )
     dati_motore = apply_template(nuovo_template, lines, full_text, page_images=page_images)
@@ -336,7 +317,6 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", t
     id_ai = _identity_ratio(righe_ai)
     id_motore = _identity_ratio(righe_motore)
 
-    # Gate stretto: motore riproduce bene + almeno parte delle righe ha identita'
     template_ok = (
         q_motore > 0
         and q_ai > 0
@@ -345,13 +325,13 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", t
     )
 
     if not template_ok:
+        db.save_template(nuovo_template, customer_name)
         print(
-            f"ATTENZIONE: template OCR NON salvato su disco "
+            f"ATTENZIONE: template OCR salvato nel DB come draft "
             f"(motore utili={q_motore}/{len(righe_motore)} id={id_motore:.0%}, "
             f"AI utili={q_ai}/{len(righe_ai)} id={id_ai:.0%}). "
-            f"Uso dati grezzi AI one-shot per QUESTO documento."
+            f"Rivedi le colonne nell'editor."
         )
-        # Template AI NON salvato nel DB: non ha passato il quality gate
         if q_ai >= q_motore and q_ai > 0:
             packed = _pack_ai_dati(dati_ai, nuovo_template)
         elif q_motore > 0:
@@ -362,22 +342,18 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", t
             packed,
             source=source,
             extraction_mode="ai_oneshot",
-            template_saved=False,
+            template_saved=True,
             generato_da_ai=True,
             q_ai=q_ai,
             q_motore=q_motore,
             customer_name=customer_name,
         )
 
-    saved_path = save_template(nuovo_template, TEMPLATES_DRAFT_OCR_DIR)
     db.save_template(nuovo_template, customer_name)
-    print(
-        f"Template OCR (draft) salvato in: {saved_path}\n"
-        f"  (non e' in templates/ root: promuovi a mano dopo verifica)"
-    )
+    print("Template OCR salvato nel DB. Rivedi le colonne nell'editor.")
     if q_motore != q_ai or len(righe_motore) != len(righe_ai):
         print(
-            f"ATTENZIONE: draft OCR parziale "
+            f"ATTENZIONE: template OCR parziale "
             f"(motore {q_motore}/{len(righe_motore)}, AI {q_ai}/{len(righe_ai)})."
         )
 
@@ -389,16 +365,11 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", t
         generato_da_ai=True,
         q_ai=q_ai,
         q_motore=q_motore,
-        template_path=saved_path,
         customer_name=customer_name,
     )
 
 
 def estrai_ordine(pdf_path, customer_name="UNKNOWN", template_name=None):
-    """
-    -eo: native se c'e' testo; altrimenti OCR PDF (source=ocr_pdf).
-    Ritorna solo il dict dati (con meta).
-    """
     with pdfplumber.open(pdf_path) as pdf:
         lines, full_text = _collect_all_pages(pdf)
 
@@ -419,8 +390,6 @@ def estrai_ordine(pdf_path, customer_name="UNKNOWN", template_name=None):
             ) from e
 
         if not _has_usable_text(full_text):
-            # Prova OCR zonale come ultima risorsa: se abbiamo immagini, OCR globale ha fallito,
-            # ma OCR zonale sui singoli campi potrebbe ancora funzionare.
             if page_images:
                 print("OCR globale ha prodotto poco testo. Uso comunque OCR zonale sui campi.")
             else:
@@ -434,7 +403,6 @@ def estrai_ordine(pdf_path, customer_name="UNKNOWN", template_name=None):
 
 
 def estrai_ordine_immagini(image_paths, customer_name="UNKNOWN", template_name=None):
-    """-eoi: OCR multipagina, source=ocr_image."""
     from image_ocr import collect_lines_from_images, validate_image_paths
 
     paths = validate_image_paths(image_paths)
@@ -485,12 +453,12 @@ def _print_usage():
     print("  python main.py -customer \"Nome Cliente\" [-templateName \"NOME\"] [-outputTemplatePath \"PATH\"] [-append] -eoi <img1> [img2 ...]")
     print()
     print("Opzioni (ordine libero):")
-    print("  -customer           Nome cliente (obbligatorio, salvato in JSON e DB template)")
-    print("  -templateName       Nome template (opzionale, forza il nome del template generato dall'AI)")
+    print("  -customer           Nome cliente (obbligatorio)")
+    print("  -templateName       Nome template (opzionale)")
     print("  -outputTemplatePath Path output JSON (opzionale, default: output/<file>_estratto.json)")
-    print("  -append             Appende al JSON esistente invece di sovrascrivere (default: false)")
-    print("  -eo                 PDF: testo nativo (template riusabile) oppure OCR se scansione")
-    print("  -eoi                Immagini/foto (OCR, prompt dedicato, template solo se gate ok)")
+    print("  -append             Appende al JSON esistente (default: false)")
+    print("  -eo                 PDF: testo nativo oppure OCR se scansione")
+    print("  -eoi                Immagini/foto (OCR)")
 
 
 def _save_json(dati, stem_source, output_path=None, append=False):
@@ -521,52 +489,16 @@ def _save_json(dati, stem_source, output_path=None, append=False):
     print(f"\n\nJSON salvato in: {json_output}")
     if dati.get("generato_da_ai"):
         if dati.get("extraction_mode") == "ai_oneshot":
-            print(
-                "NOTA: estrazione AI one-shot (nessun template riusabile salvato in root). "
-                "Verifica i dati prima della produzione."
-            )
+            print("NOTA: estrazione AI one-shot. Verifica i dati prima della produzione.")
         else:
-            print(
-                "NOTA: template generato dall'AI. Verifica i dati e il file template "
-                "prima della produzione."
-            )
-
-
-def _sync_templates_from_disk():
-    """Importa template JSON da disco nel DB se non esistono già (sync automatico)."""
-    import json as _json
-    dirs = [TEMPLATES_DIR, TEMPLATES_DRAFT_OCR_DIR]
-    imported = 0
-    for d in dirs:
-        if not d.exists():
-            continue
-        for path in sorted(d.glob("*.json")):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    tpl = _json.load(f)
-                name = tpl.get("name")
-                if not name:
-                    continue
-                existing = db.get_template_by_name(name)
-                if existing:
-                    continue  # già nel DB, non sovrascrivere
-                db.save_template(tpl, "UNKNOWN")
-                imported += 1
-                print(f"Importato template da disco: {path.name} -> DB")
-            except Exception as e:
-                print(f"WARN: impossibile importare {path.name}: {e}")
-    if imported:
-        print(f"Sync disco->DB completato: {imported} nuovi template importati.")
+            print("NOTA: template generato dall'AI. Verifica i dati prima della produzione.")
 
 
 if __name__ == "__main__":
-    _sync_templates_from_disk()
-
     if len(sys.argv) < 5:
         _print_usage()
         sys.exit(1)
 
-    # Parsing: tutti i flag in qualsiasi ordine, comando (-eo/-eoi) e relativi args
     args = sys.argv[1:]
     customer_name = None
     template_name = None
@@ -608,7 +540,6 @@ if __name__ == "__main__":
         else:
             i += 1
 
-    # Raccogli args dopo il comando
     comando_args = args[comando_idx + 1:] if comando_idx >= 0 else []
 
     if not customer_name:

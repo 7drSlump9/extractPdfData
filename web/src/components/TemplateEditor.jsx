@@ -2,6 +2,9 @@ import React, { useState, useRef } from 'react';
 import { getTemplates, getTemplate, saveTemplate, testPdfTemplate } from '../api';
 import PdfViewer from './PdfViewer';
 import ErrorBoundary from './ErrorBoundary';
+import config from '../config.json';
+
+const sc = config.sectionColors || {};
 
 const css = {
   page: { display: 'flex', height: '100vh', background: '#0f172a', color: '#e2e8f0' },
@@ -16,6 +19,11 @@ const css = {
   btn4: { background: 'transparent', color: '#94a3b8', border: '1px solid #334155' },
   lbl: { fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, marginTop: 10 },
   sec: { background: '#0f172a', borderRadius: 8, padding: 10, marginBottom: 10 },
+  secHdr: { background: sc.header || '#1e2d4a', borderRadius: 8, padding: 10, marginBottom: 10 },
+  secTbl: { background: sc.table || '#1a3d2e', borderRadius: 8, padding: 10, marginBottom: 10 },
+  secFtr: { background: sc.footer || '#2a1a3d', borderRadius: 8, padding: 10, marginBottom: 10 },
+  secSig: { background: sc.signature || '#3d2e1a', borderRadius: 8, padding: 10, marginBottom: 10 },
+  secRiep: { background: sc.riepilogo || '#1a2e3d', borderRadius: 8, padding: 10, marginBottom: 10 },
   row: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 },
   inp: { flex: 1, minWidth: 0 },
   tag: { fontSize: 10, background: '#334155', padding: '2px 6px', borderRadius: 10, color: '#94a3b8' },
@@ -437,7 +445,7 @@ export default function TemplateEditor({ username, onLogout }) {
               </div>
 
               {/* === HEADER === */}
-              <div style={css.sec}>
+              <div style={css.secHdr}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span style={css.lbl}>Header ({(template.header?.fields || []).length})</span>
                   <button onClick={addHdr} style={{ ...css.btn1, fontSize: 14, padding: '4px 10px' }}>+</button>
@@ -544,7 +552,7 @@ export default function TemplateEditor({ username, onLogout }) {
               </div>
 
               {/* === TABLE === */}
-              <div style={css.sec}>
+              <div style={css.secTbl}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span style={css.lbl}>Table ({(template.table?.columns || []).length})</span>
                   <button onClick={addCol} style={{ ...css.btn1, fontSize: 14, padding: '4px 10px' }}>+</button>
@@ -621,7 +629,7 @@ export default function TemplateEditor({ username, onLogout }) {
               </div>
 
               {/* === FOOTER === */}
-              <div style={css.sec}>
+              <div style={css.secFtr}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span style={css.lbl}>Footer ({(template.footer?.fields || []).length})</span>
                   <button onClick={addFtr} style={{ ...css.btn1, fontSize: 14, padding: '4px 10px' }}>+</button>
@@ -659,13 +667,13 @@ export default function TemplateEditor({ username, onLogout }) {
               </div>
 
               {/* Signature */}
-              <div style={css.sec}>
+              <div style={css.secSig}>
                 <span style={css.lbl}>Signature</span>
                 <input value={(template.signature || []).join(', ')} onChange={e => setTemplate({ ...template, signature: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} placeholder="sig1, sig2" style={{ width: '100%', fontSize: 11 }} />
               </div>
 
               {/* Riepilogo */}
-              <div style={css.sec}>
+              <div style={css.secRiep}>
                 <div style={css.lbl}>Riepilogo</div>
                 <pre style={{
                   margin: 0, padding: 8, background: '#0f172a', borderRadius: 6,
