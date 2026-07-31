@@ -8,8 +8,8 @@ Sorgenti layout (policy diverse):
   - ocr_image  : foto (-eoi)
 
 Uso:
-    python main.py -customer "Nome Cliente" [-templateName "NOME"] [-outputTemplatePath "PATH"] [-append] -eo <path_pdf>
-    python main.py -customer "Nome Cliente" [-templateName "NOME"] [-outputTemplatePath "PATH"] [-append] -eoi <img1> [img2 ...]
+    python main.py -customer "Nome Cliente" -template "NOME" [-outputTemplatePath "PATH"] [-append] -eo <path_pdf>
+    python main.py -customer "Nome Cliente" -template "NOME" [-outputTemplatePath "PATH"] [-append] -eoi <img1> [img2 ...]
 """
 
 import json
@@ -228,19 +228,21 @@ def _bootstrap_ai(lines, full_text, mode, customer_name="UNKNOWN", template_name
 
 
 def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", template_name=None):
-    matched = _match_or_none(lines, full_text, customer_name=customer_name)
-    if matched is not None:
-        dati, template = matched
-        db.save_template(template, customer_name)
+    tpl = db.get_template_by_name(template_name) if template_name else None
+    if tpl:
+        print(f"Template '{template_name}' trovato nel DB. Applico direttamente.")
+        dati = apply_template(tpl, lines, full_text)
+        db.save_template(tpl, customer_name)
         return _attach_meta(
             dati,
             source=source,
             extraction_mode="template",
-            template_saved=False,
+            template_saved=True,
             generato_da_ai=False,
             customer_name=customer_name,
         )
 
+    print(f"Template '{template_name}' non trovato nel DB. Creo nuovo con AI.")
     dati_ai, nuovo_template = _bootstrap_ai(
         lines, full_text, mode="native", customer_name=customer_name, template_name=template_name
     )
@@ -290,21 +292,21 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", t
 
 
 def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", template_name=None, page_images=None):
-    matched = _match_or_none(lines, full_text, customer_name=customer_name, page_images=page_images)
-    if matched is None:
-        matched = _match_or_none(lines, full_text, customer_name=customer_name, fuzzy=True, page_images=page_images)
-    if matched is not None:
-        dati, template = matched
-        db.save_template(template, customer_name)
+    tpl = db.get_template_by_name(template_name) if template_name else None
+    if tpl:
+        print(f"Template '{template_name}' trovato nel DB. Applico direttamente.")
+        dati = apply_template(tpl, lines, full_text, page_images=page_images)
+        db.save_template(tpl, customer_name)
         return _attach_meta(
             dati,
             source=source,
             extraction_mode="template",
-            template_saved=False,
+            template_saved=True,
             generato_da_ai=False,
             customer_name=customer_name,
         )
 
+    print(f"Template '{template_name}' non trovato nel DB. Creo nuovo con AI.")
     dati_ai, nuovo_template = _bootstrap_ai(
         lines, full_text, mode="ocr", customer_name=customer_name, template_name=template_name
     )
@@ -449,12 +451,12 @@ def stampa_risultati(dati):
 
 def _print_usage():
     print("Uso:")
-    print("  python main.py -customer \"Nome Cliente\" [-templateName \"NOME\"] [-outputTemplatePath \"PATH\"] [-append] -eo <path_pdf>")
-    print("  python main.py -customer \"Nome Cliente\" [-templateName \"NOME\"] [-outputTemplatePath \"PATH\"] [-append] -eoi <img1> [img2 ...]")
+    print("  python main.py -customer \"Nome Cliente\" -template \"NOME\" [-outputTemplatePath \"PATH\"] [-append] -eo <path_pdf>")
+    print("  python main.py -customer \"Nome Cliente\" -template \"NOME\" [-outputTemplatePath \"PATH\"] [-append] -eoi <img1> [img2 ...]")
     print()
     print("Opzioni (ordine libero):")
     print("  -customer           Nome cliente (obbligatorio)")
-    print("  -templateName       Nome template (opzionale)")
+    print("  -template (-t)      Nome template (obbligatorio). Se esiste nel DB lo usa, altrimenti lo crea con AI.")
     print("  -outputTemplatePath Path output JSON (opzionale, default: output/<file>_estratto.json)")
     print("  -append             Appende al JSON esistente (default: false)")
     print("  -eo                 PDF: testo nativo oppure OCR se scansione")
@@ -516,9 +518,9 @@ if __name__ == "__main__":
                 sys.exit(1)
             customer_name = args[i + 1]
             i += 2
-        elif args[i] == "-templateName":
+        elif args[i] == "-template" or args[i] == "-t":
             if i + 1 >= len(args):
-                print("Errore: -templateName richiede un valore")
+                print("Errore: -template richiede un valore")
                 _print_usage()
                 sys.exit(1)
             template_name = args[i + 1]
@@ -544,6 +546,11 @@ if __name__ == "__main__":
 
     if not customer_name:
         print("Errore: -customer obbligatorio")
+        _print_usage()
+        sys.exit(1)
+
+    if not template_name:
+        print("Errore: -template obbligatorio")
         _print_usage()
         sys.exit(1)
 
