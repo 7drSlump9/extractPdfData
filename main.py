@@ -118,8 +118,8 @@ def _collect_pages_via_ocr(pdf, dpi=PDF_OCR_DPI):
         page_dims.append((pw, ph))
 
     print(f"OCR su {len(page_images)} pagina/e PDF (render {dpi}dpi)...")
-    lines, full_text = collect_lines_from_pil_images(page_images, labels=[f"pagina {i+1}" for i in range(len(page_images))])
-    return lines, full_text, list(zip(page_images, page_dims, page_images))
+    lines, full_text, rotations = collect_lines_from_pil_images(page_images, labels=[f"pagina {i+1}" for i in range(len(page_images))], auto_orient=False)
+    return lines, full_text, list(zip(page_images, page_dims, page_images)), rotations
 
 
 def _valore_utile(v):
@@ -232,7 +232,6 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", t
     if tpl:
         print(f"Template '{template_name}' trovato nel DB. Applico direttamente.")
         dati = apply_template(tpl, lines, full_text)
-        db.save_template(tpl, customer_name)
         return _attach_meta(
             dati,
             source=source,
@@ -296,7 +295,6 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", t
     if tpl:
         print(f"Template '{template_name}' trovato nel DB. Applico direttamente.")
         dati = apply_template(tpl, lines, full_text, page_images=page_images)
-        db.save_template(tpl, customer_name)
         return _attach_meta(
             dati,
             source=source,
@@ -383,7 +381,7 @@ def estrai_ordine(pdf_path, customer_name="UNKNOWN", template_name=None):
             "Provo OCR (immagine embedded o render pagine)..."
         )
         try:
-            lines, full_text, page_images = _collect_pages_via_ocr(pdf)
+            lines, full_text, page_images, rotations = _collect_pages_via_ocr(pdf)
         except RuntimeError as e:
             raise RuntimeError(
                 f"Fallback OCR sul PDF fallito: {e}\n"

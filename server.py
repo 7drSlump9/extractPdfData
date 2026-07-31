@@ -96,7 +96,7 @@ def api_save_template():
         return jsonify({"error": "Campo 'name' obbligatorio"}), 400
     customer = data.get("customer_file", data.get("customer_name", "UNKNOWN"))
     try:
-        result = db.save_template(data, customer_name=customer)
+        result = db.save_template(data, customer_name=customer, overwrite=True)
         return jsonify({"ok": True, "db": result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -244,14 +244,67 @@ def _table_region_lines(lines, start_markers, end_markers):
     return out
 
 
+def _extract_side_by_side(table_config, lines):
+    """
+    Estrae articoli da layout side_by_side_items: N articoli affiancati
+    orizzontalmente, ciascuno in una banda X. Le colonne hanno y_min/y_max
+    per indicare dove si trova il valore dentro la banda.
+    """
+    start_markers = table_config.get('start_after_contains') or []
+    end_markers = [m.upper() for m in table_config.get('end_markers', [])]
+    # Se non ci sono start_markers, usa tutte le righe (dati sparsi su pagina)
+    if start_markers:
+        region_lines = _table_region_lines(lines, start_markers, end_markers)
+    else:
+        region_lines = lines
+    if not region_lines:
+        return []
+
+    bands = table_config.get('item_x_bands') or []
+    columns = table_config.get('columns') or []
+    if not bands or not columns:
+        return []
+
+    rows = []
+    for band in bands:
+        row = {}
+        for col in columns:
+            name = col.get('name', '')
+            x_min = col.get('x_min', band.get('x_min', 0))
+            x_max = col.get('x_max', band.get('x_max', 1000))
+            y_min = col.get('y_min')
+            y_max = col.get('y_max')
+            value_type = col.get('value', 'first_word')
+
+            y_tol = col.get('y_tolerance', 5)
+            # Raccogli parole dentro il rettangolo colonna
+            tokens = []
+            for top, row_words in region_lines:
+                if y_min is not None and y_max is not None:
+                    if top < y_min - y_tol or top > y_max + y_tol:
+                        continue
+                for w in row_words:
+                    if x_min <= round(w['x0']) < x_max:
+                        tokens.append(w['text'])
+            row[name] = extract_column_value(tokens, value_type)
+        if any(v not in ("N/A", "", None) for v in row.values()):
+            rows.append(row)
+    return rows
+
+
 def extract_table(table_config, lines):
     if not table_config:
         return []
 
+    if table_config.get('layout') == 'side_by_side_items':
+        return _extract_side_by_side(table_config, lines)
+
     columns = table_config.get('columns')
     if not columns:
         return []
-    row_pattern = re.compile(table_config.get('row_detect_pattern') or r'.')
+    row_detect_pattern = table_config.get('row_detect_pattern') or r'.'
+    row_detect_col = table_config.get('row_detect_column')  # nome colonna per match ristretto
+    row_pattern = re.compile(row_detect_pattern)
     skip_pattern = re.compile(table_config['skip_line_if_matches']) if table_config.get('skip_line_if_matches') else None
     start_markers = table_config.get('start_after_contains', [])
     end_markers = [m.upper() for m in table_config.get('end_markers', [])]
@@ -278,8 +331,12 @@ def extract_table(table_config, lines):
         # template (es. generato dall'AI) punta entrambi allo stesso nome campo
         # per errore, l'estrazione mirata deve vincere sul semplice testo grezzo.
         cjf = table_config.get('continuation_join_field')
-        if cjf:
-            row[cjf] = " | ".join(current_continuation)
+        if cjf and current_continuation:
+            prev = row.get(cjf, "")
+            if prev and prev != "N/A":
+                row[cjf] = prev + " | " + " | ".join(current_continuation)
+            else:
+                row[cjf] = " | ".join(current_continuation)
 
         cfe = table_config.get('continuation_field_extract')
         if cfe:
@@ -308,11 +365,21 @@ def extract_table(table_config, lines):
                 continue
 
         if end_markers and any(marker in text_upper for marker in end_markers):
+            flush()
             break
         if skip_pattern and skip_pattern.match(text.strip()):
             continue
 
-        if row_pattern.search(text):
+        matched = False
+        if row_detect_col:
+            col_def = next((c for c in columns if c.get('name') == row_detect_col), None)
+            if col_def:
+                col_text = " ".join(words_in_range(row_words, col_def['x_min'], col_def['x_max']))
+                matched = bool(row_pattern.search(col_text))
+        else:
+            matched = bool(row_pattern.search(text))
+
+        if matched:
             flush()
             current_tokens = {
                 col['name']: words_in_range(row_words, col['x_min'], col['x_max'])

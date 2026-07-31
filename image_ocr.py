@@ -267,11 +267,12 @@ def _line_text(row):
     return " ".join(w["text"] for w in row)
 
 
-def collect_lines_from_pil_images(images, lang: str = "ita+eng", labels=None):
+def collect_lines_from_pil_images(images, lang: str = "ita+eng", labels=None, auto_orient=True):
     """
     OCR multipagina da oggetti PIL.Image (es. pagine PDF renderizzate).
-    Ritorna (all_lines, full_text) con Y offset cumulativo tra pagine,
-    stesso contratto di main._collect_all_pages sul PDF.
+    Ritorna (all_lines, full_text, rotations) con Y offset cumulativo tra pagine.
+    rotations: lista di gradi di rotazione applicati per ogni pagina (0/90/180/270).
+    auto_orient: se True, prova auto-rotazione (foto). False per PDF (orientamento già corretto).
     """
     if not images:
         raise ValueError("Nessuna immagine fornita")
@@ -279,12 +280,22 @@ def collect_lines_from_pil_images(images, lang: str = "ita+eng", labels=None):
     all_lines = []
     y_offset = 0.0
     text_parts = []
+    rotations = []
 
     for i, im in enumerate(images):
         label = None
         if labels and i < len(labels):
             label = labels[i]
-        words, page_height, degrees = _ocr_page_words(im, lang=lang)
+        if auto_orient:
+            words, page_height, degrees = _ocr_page_words(im, lang=lang)
+        else:
+            prepared = _prepare_image(im)
+            data = _ocr_raw(prepared, lang=lang)
+            rw, rh = prepared.size
+            words, _ = _data_to_words(data, img_width=rw, img_height=rh)
+            degrees = 0
+            page_height = float(rh)
+        rotations.append(degrees)
         if degrees:
             tag = label or f"pagina {i + 1}"
             print(f"  OCR auto-rotate {tag}: {degrees}°")
@@ -295,7 +306,7 @@ def collect_lines_from_pil_images(images, lang: str = "ita+eng", labels=None):
         text_parts.append("\n".join(_line_text(row) for _, row in page_lines))
         y_offset += page_height + 10.0
 
-    return all_lines, "\n".join(text_parts)
+    return all_lines, "\n".join(text_parts), rotations
 
 
 def collect_lines_from_images(image_paths, lang: str = "ita+eng"):

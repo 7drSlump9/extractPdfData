@@ -59,8 +59,9 @@ class Database:
     def get_session(self):
         return self.Session()
     
-    def save_template(self, template_dict: dict, customer_name: str = "UNKNOWN") -> str:
-        """Save or update template in DB. json_data must be full original JSON content."""
+    def save_template(self, template_dict: dict, customer_name: str = "UNKNOWN", overwrite: bool = False) -> str:
+        """Save or update template in DB. json_data must be full original JSON content.
+        If overwrite=False and template exists, raises ValueError to prevent accidental overwrite."""
         session = self.get_session()
         try:
             name = template_dict.get("name", "unknown")
@@ -73,6 +74,9 @@ class Database:
 
             existing = session.query(Template).filter_by(name=name).first()
             if existing:
+                if not overwrite:
+                    session.close()
+                    raise ValueError(f"Template '{name}' esiste gia'. Usa overwrite=True per sovrascrivere.")
                 existing.customer_name = customer_name
                 existing.json_data_old = existing.json_data
                 existing.json_data = json_str
