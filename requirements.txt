@@ -5,3 +5,6 @@ pytesseract
 sqlalchemy
 flask
 flask-cors
+easyocr
+transformers
+torch

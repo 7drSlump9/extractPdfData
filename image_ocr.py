@@ -207,6 +207,238 @@ def _ocr_page_words(image: Image.Image, lang: str = "ita+eng"):
     return words, float(oriented.height or 0), degrees
 
 
+_easyocr_reader = None
+
+def _get_easyocr_reader():
+    global _easyocr_reader
+    if _easyocr_reader is None:
+        import numpy as np
+        try:
+            import easyocr
+        except ImportError:
+            raise RuntimeError(
+                "Modulo easyocr non installato. Esegui: pip install easyocr"
+            )
+        _easyocr_reader = easyocr.Reader(['it', 'en'], gpu=False)
+    return _easyocr_reader
+
+
+def htr_zone_easyocr(image, x, y, w, h, config=None):
+    """HTR con easyocr (testo stampato, ~100MB)."""
+    import numpy as np
+    cfg = config or {}
+    margin = cfg.get('margin', 0.20)
+    upscale_min = cfg.get('upscaleMin', 300)
+    text_threshold = cfg.get('textThreshold', 0.3)
+    contrast_ths = cfg.get('contrastThs', 0.1)
+    adjust_contrast = cfg.get('adjustContrast', 0.5)
+    lang = cfg.get('language', 'it')
+    # Margine configurabile
+    mx = max(3, int(w * margin))
+    my = max(3, int(h * margin))
+    x1 = max(0, x - mx)
+    y1 = max(0, y - my)
+    x2 = min(image.size[0], x + w + mx)
+    y2 = min(image.size[1], y + h + my)
+    cropped = image.crop((x1, y1, x2, y2))
+    # Upscale se zona troppo piccola
+    cw, ch = cropped.size
+    if min(cw, ch) < upscale_min and min(cw, ch) > 0:
+        scale = upscale_min / min(cw, ch)
+        scale = min(scale, 4.0)
+        cropped = cropped.resize((int(cw * scale), int(ch * scale)), Image.Resampling.LANCZOS)
+    # easyocr vuole numpy array RGB
+    if cropped.mode != 'RGB':
+        cropped = cropped.convert('RGB')
+    arr = np.array(cropped)
+    try:
+        reader = _get_easyocr_reader()
+        results = reader.readtext(
+            arr,
+            detail=0,
+            text_threshold=text_threshold,
+            contrast_ths=contrast_ths,
+            adjust_contrast=adjust_contrast,
+        )
+        text = " ".join(results).strip()
+    except Exception:
+        text = ""
+    return text
+
+
+_trocr_cache = {}
+
+def _get_trocr(model_name="microsoft/trocr-base-handwritten"):
+    """Carica (e cache per nome) processor+model TrOCR. model in eval mode."""
+    global _trocr_cache
+    if model_name not in _trocr_cache:
+        try:
+            from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+        except ImportError:
+            raise RuntimeError(
+                "Moduli transformers/torch non installati. Esegui: pip install transformers torch"
+            )
+        print(f"[TrOCR] carico modello '{model_name}' (prima volta puo' scaricare ~1GB)...")
+        processor = TrOCRProcessor.from_pretrained(model_name)
+        model = VisionEncoderDecoderModel.from_pretrained(model_name)
+        model.eval()
+        _trocr_cache[model_name] = (processor, model)
+    return _trocr_cache[model_name]
+
+
+def _prep_line_for_trocr(line_img, preprocess, target_h=64, min_ratio=4.0):
+    """
+    Prepara una riga per TrOCR mantenendo aspect ratio:
+    - grayscale + autocontrast (NO binarizzazione dura)
+    - resize ad altezza fissa target_h mantenendo proporzioni
+    - pad bianco a destra per raggiungere ratio minimo (evita schiacciamento su 384x384)
+    """
+    from PIL import ImageOps
+    img = line_img
+    if preprocess:
+        if img.mode != 'L':
+            img = img.convert('L')
+        img = ImageOps.autocontrast(img, cutoff=2)
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    w, h = img.size
+    if h <= 0 or w <= 0:
+        return img
+    # resize altezza fissa mantenendo ratio
+    scale = target_h / h
+    new_w = max(1, int(w * scale))
+    img = img.resize((new_w, target_h), Image.Resampling.LANCZOS)
+    # pad bianco per ratio minimo
+    min_w = int(target_h * min_ratio)
+    if new_w < min_w:
+        padded = Image.new('RGB', (min_w, target_h), (255, 255, 255))
+        padded.paste(img, (0, 0))
+        img = padded
+    return img
+
+
+def _segment_lines(gray_img, row_thresh_ratio=0.02, min_line_h=8):
+    """
+    Segmenta un crop in righe di testo via projection profile orizzontale.
+    Ritorna lista di (top, bottom) in pixel. Se non trova nulla → [].
+    """
+    import numpy as np
+    from PIL import ImageOps
+    g = gray_img.convert('L')
+    g = ImageOps.autocontrast(g, cutoff=2)
+    arr = np.asarray(g).astype(np.float32)
+    # inchiostro scuro = valori bassi. Densità = quanto scuro per riga.
+    darkness = 255.0 - arr
+    row_energy = darkness.mean(axis=1)
+    thresh = row_energy.max() * row_thresh_ratio + row_energy.mean() * 0.3
+    mask = row_energy > thresh
+    segments = []
+    start = None
+    for i, on in enumerate(mask):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            if i - start >= min_line_h:
+                segments.append((start, i))
+            start = None
+    if start is not None and len(mask) - start >= min_line_h:
+        segments.append((start, len(mask)))
+    return segments
+
+
+def htr_zone_trocr(image, x, y, w, h, config=None):
+    """HTR con TrOCR. Gestisce multi-riga via segmentazione e mantiene aspect ratio."""
+    import torch
+    cfg = config or {}
+    margin = cfg.get('margin', 0.20)
+    preprocess = cfg.get('preprocess', True)
+    num_beams = cfg.get('num_beams', 5)
+    max_length = cfg.get('max_length', 64)
+    model_name = cfg.get('model', "microsoft/trocr-base-handwritten")
+    target_h = cfg.get('lineHeight', 64)
+    multiline = cfg.get('multiline', True)
+
+    if w <= 0 or h <= 0:
+        print(f"[TrOCR] zona degenere {w}x{h}, skip")
+        return ""
+
+    # Margine
+    mx = max(3, int(w * margin))
+    my = max(3, int(h * margin))
+    x1 = max(0, x - mx)
+    y1 = max(0, y - my)
+    x2 = min(image.size[0], x + w + mx)
+    y2 = min(image.size[1], y + h + my)
+    cropped = image.crop((x1, y1, x2, y2))
+    cw, ch = cropped.size
+    if cw <= 0 or ch <= 0:
+        print(f"[TrOCR] crop vuoto, skip")
+        return ""
+
+    # Segmenta in righe (se multiline). Altrimenti riga unica.
+    line_boxes = []
+    if multiline:
+        try:
+            line_boxes = _segment_lines(cropped)
+        except Exception as e:
+            print(f"[TrOCR] segmentazione fallita ({e}), uso riga unica")
+            line_boxes = []
+    if not line_boxes:
+        line_boxes = [(0, ch)]
+
+    try:
+        processor, model = _get_trocr(model_name)
+    except Exception as e:
+        print(f"[TrOCR] ERRORE caricamento modello: {e}")
+        return ""
+
+    texts = []
+    for (top, bottom) in line_boxes:
+        line_crop = cropped.crop((0, top, cw, bottom))
+        prepared = _prep_line_for_trocr(line_crop, preprocess, target_h=target_h)
+        try:
+            pixel_values = processor(prepared, return_tensors="pt").pixel_values
+            with torch.no_grad():
+                generated_ids = model.generate(
+                    pixel_values,
+                    num_beams=num_beams,
+                    max_length=max_length,
+                    early_stopping=True,
+                )
+            line_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+            if line_text:
+                texts.append(line_text)
+            print(f"[TrOCR] riga y[{top}:{bottom}] -> '{line_text}'")
+        except Exception as e:
+            import traceback
+            print(f"[TrOCR] ERRORE inferenza riga: {e}")
+            traceback.print_exc()
+
+    result = "\n".join(texts).strip()
+    print(f"[TrOCR] risultato zona ({len(line_boxes)} righe): '{result}'")
+    return result
+
+
+
+def htr_zone(image, x, y, w, h, config=None):
+    """HTR dispatcher: sceglie motore in base a config.engine.
+    Poi passa config[engine] (sottosezione) al motore scelto.
+    - 'easyocr': testo stampato, veloce, ~100MB
+    - 'trocr':   preciso, ~1GB (richiede transformers+torch).
+                 Modello configurabile via config[trocr].model:
+                   'microsoft/trocr-base-printed'     -> STAMPATELLO
+                   'microsoft/trocr-base-handwritten' -> CORSIVO/manoscritto"""
+
+    cfg = config or {}
+    engine = cfg.get('engine', 'easyocr')
+    engine_cfg = cfg.get(engine, {})
+    print(f"[HTR] engine={engine} | zona={w}x{h}px")
+    if engine == 'trocr':
+        return htr_zone_trocr(image, x, y, w, h, engine_cfg)
+    else:
+        return htr_zone_easyocr(image, x, y, w, h, engine_cfg)
+
+
 def ocr_zone(image, x, y, w, h, lang="ita+eng"):
     """OCR su una zona specifica dell'immagine con alta precisione."""
     _ensure_tesseract()

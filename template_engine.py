@@ -13,6 +13,7 @@ import re
 import json
 from pathlib import Path
 from collections import defaultdict
+import os
 
 NUMERIC_RE = re.compile(r'^[\d\.,]+$')
 
@@ -94,7 +95,7 @@ def match_template(templates, full_text, min_match_ratio=1.0):
 # ---------------------------------------------------------------------------
 # Estrazione campi di intestazione
 # ---------------------------------------------------------------------------
-def extract_header_field(config, full_text, lines, page_images=None):
+def extract_header_field(config, full_text, lines, page_images=None, htr_config=None):
     ftype = config.get('type', 'regex_full_text')
     group = config.get('group', 1)
 
@@ -104,12 +105,13 @@ def extract_header_field(config, full_text, lines, page_images=None):
         y_min = config.get('y_min')
         y_max = config.get('y_max')
         multiline = config.get('multiline', False)
+        htr = config.get('htr', False)
         flags = re.DOTALL if multiline else 0
         if x_min is not None and x_max is not None and y_min is not None and y_max is not None:
             # OCR zonale mirato se abbiamo immagini (piu' preciso dell'OCR globale)
             if page_images:
                 from PIL import Image
-                from image_ocr import ocr_zone
+                from image_ocr import ocr_zone, htr_zone
                 # page_images: lista di (img, (page_w, page_h), render_dpi) tuple
                 if isinstance(page_images, list) and len(page_images) > 0:
                     img, page_dims = page_images[0][:2]  # default prima pagina
@@ -141,12 +143,18 @@ def extract_header_field(config, full_text, lines, page_images=None):
                         iw = int((x_max - x_min) / 1000.0 * iw_img)
                         ih = int((y_max - y_min) / 1000.0 * ih_img)
                         try:
-                            text = ocr_zone(ocr_img, ix, iy, iw, ih)
-                            if text:
-                                m = re.search(config['pattern'], text, flags)
-                                result = _safe_group(m, group)
-                                if result and result != "N/A":
-                                    return result
+                            if htr:
+                                print(f"[HTR] campo in elaborazione...")
+                                text = htr_zone(ocr_img, ix, iy, iw, ih, config=htr_config)
+                                if text:
+                                    return text
+                            else:
+                                text = ocr_zone(ocr_img, ix, iy, iw, ih)
+                                if text:
+                                    m = re.search(config['pattern'], text, flags)
+                                    result = _safe_group(m, group)
+                                    if result and result != "N/A":
+                                        return result
                         except Exception:
                             pass  # fallback a OCR globale
                 elif not isinstance(page_images, list):
@@ -155,10 +163,15 @@ def extract_header_field(config, full_text, lines, page_images=None):
                     w = x_max - x_min
                     h = y_max - y_min
                     try:
-                        text = ocr_zone(img, x_min, y_min, w, h)
-                        if text:
-                            m = re.search(config['pattern'], text, flags)
-                            return _safe_group(m, group) or "N/A"
+                        if htr:
+                            text = htr_zone(img, x_min, y_min, w, h, config=htr_config)
+                            if text:
+                                return text
+                        else:
+                            text = ocr_zone(img, x_min, y_min, w, h)
+                            if text:
+                                m = re.search(config['pattern'], text, flags)
+                                return _safe_group(m, group) or "N/A"
                     except Exception:
                         pass
             # Fallback: filtra testo OCR globale dentro il rettangolo
@@ -398,17 +411,32 @@ def extract_table(table_config, lines):
 # ---------------------------------------------------------------------------
 # Applicazione completa di un template a un documento
 # ---------------------------------------------------------------------------
+def _load_htr_config():
+    """Carica configurazione HTR dal config.json frontend."""
+    config_paths = [
+        Path(os.path.dirname(__file__)) / "web" / "src" / "config.json",
+        Path(os.getcwd()) / "web" / "src" / "config.json",
+    ]
+    for p in config_paths:
+        if p.exists():
+            with open(p, encoding='utf-8') as f:
+                config = json.load(f)
+            return config.get('htr', {})
+    return {}
+
+
 def apply_template(template, lines, full_text, page_images=None):
     result = {"formato": template.get('name', 'UNKNOWN')}
+    htr_config = _load_htr_config()
     # Retrocompatibilità: header.fields (nuovo) oppure header_fields (vecchio)
     header_fields = template.get('header', {}).get('fields', None)
     if header_fields is None:
         header_fields = template.get('header_fields', {})
     for field_name, cfg in header_fields.items():
-        result[field_name] = extract_header_field(cfg, full_text, lines, page_images=page_images)
+        result[field_name] = extract_header_field(cfg, full_text, lines, page_images=page_images, htr_config=htr_config)
     result['righe'] = extract_table(template.get('table'), lines)
     footer_fields = template.get('footer', {}).get('fields', {})
     for field_name, cfg in footer_fields.items():
-        result[field_name] = extract_header_field(cfg, full_text, lines, page_images=page_images)
+        result[field_name] = extract_header_field(cfg, full_text, lines, page_images=page_images, htr_config=htr_config)
     return result
 

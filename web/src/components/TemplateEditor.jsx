@@ -55,6 +55,7 @@ function normalizeTemplate(tpl) {
       x_max: f.x_max ?? 0,
       y_max: f.y_max ?? 0,
       multiline: f.multiline ?? false,
+      htr: f.htr ?? false,
     }));
   } else if (rawHdrFields && typeof rawHdrFields === 'object') {
     hdrFields = Object.entries(rawHdrFields).map(([key, val]) => ({
@@ -65,6 +66,7 @@ function normalizeTemplate(tpl) {
       x_max: val.x_max ?? 0,
       y_max: val.y_max ?? 0,
       multiline: val.multiline ?? false,
+      htr: val.htr ?? false,
     }));
   }
 
@@ -93,6 +95,7 @@ function normalizeTemplate(tpl) {
       x_max: f.x_max ?? 0,
       y_max: f.y_max ?? 0,
       multiline: f.multiline ?? false,
+      htr: f.htr ?? false,
     }));
   } else if (rawFtrFields && typeof rawFtrFields === 'object') {
     ftrFields = Object.entries(rawFtrFields).map(([key, val]) => ({
@@ -103,6 +106,7 @@ function normalizeTemplate(tpl) {
       x_max: val.x_max ?? 0,
       y_max: val.y_max ?? 0,
       multiline: val.multiline ?? false,
+      htr: val.htr ?? false,
     }));
   }
 
@@ -145,6 +149,7 @@ function denormalizeTemplate(tpl) {
         x_max: f.x_max ?? 0,
         y_max: f.y_max ?? 0,
         multiline: f.multiline ?? false,
+        htr: f.htr ?? false,
       };
     }
   });
@@ -168,6 +173,7 @@ function denormalizeTemplate(tpl) {
         x_max: f.x_max ?? 0,
         y_max: f.y_max ?? 0,
         multiline: f.multiline ?? false,
+        htr: f.htr ?? false,
       };
     }
   });
@@ -275,7 +281,7 @@ export default function TemplateEditor({ username, onLogout }) {
   const addHdr = () => {
     const cur = template?.header?.fields || [];
     const hdr = template?.header || { x_min: 0, x_max: 0, y_min: 0, y_max: 200 };
-    setTemplate({ ...template, header: { ...hdr, fields: [...cur, { field: `c${cur.length + 1}`, regex: '.+', multiline: false, x_min: hdr.x_min ?? 0, y_min: hdr.y_min ?? 0, x_max: (hdr.x_min ?? 0) + 100, y_max: (hdr.y_min ?? 0) + 50 }] } });
+    setTemplate({ ...template, header: { ...hdr, fields: [...cur, { field: `c${cur.length + 1}`, regex: '.+', multiline: false, htr: false, x_min: hdr.x_min ?? 0, y_min: hdr.y_min ?? 0, x_max: (hdr.x_min ?? 0) + 100, y_max: (hdr.y_min ?? 0) + 50 }] } });
   };
   const updHdr = (i, k, v) => {
     if (!template?.header?.fields) return;
@@ -379,7 +385,7 @@ export default function TemplateEditor({ username, onLogout }) {
   const addFtr = () => {
     const cur = template?.footer?.fields || [];
     const ftr = template?.footer || { y_min: 600, y_max: 800 };
-    setTemplate({ ...template, footer: { ...ftr, fields: [...cur, { field: `f${cur.length + 1}`, regex: '.+', multiline: false, x_min: 100 + cur.length * 10, y_min: ftr.y_min, x_max: 100 + cur.length * 10 + 100, y_max: ftr.y_min + 50 }] } });
+    setTemplate({ ...template, footer: { ...ftr, fields: [...cur, { field: `f${cur.length + 1}`, regex: '.+', multiline: false, htr: false, x_min: 100 + cur.length * 10, y_min: ftr.y_min, x_max: 100 + cur.length * 10 + 100, y_max: ftr.y_min + 50 }] } });
   };
   const updFtr = (i, k, v) => {
     if (!template?.footer?.fields) return;
@@ -551,6 +557,11 @@ export default function TemplateEditor({ username, onLogout }) {
                             <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
                               <input type="checkbox" checked={f.multiline ?? false} onChange={e => updHdr(i, 'multiline', e.target.checked)} />
                               Multilinea
+                            </label>
+                            <span style={{ color: '#94a3b8' }}>HTR</span>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
+                              <input type="checkbox" checked={f.htr ?? false} onChange={e => updHdr(i, 'htr', e.target.checked)} />
+                              HTR (manoscritto)
                             </label>
                             <span style={{ color: '#94a3b8' }}>X</span>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -738,6 +749,11 @@ export default function TemplateEditor({ username, onLogout }) {
                             <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
                               <input type="checkbox" checked={f.multiline ?? false} onChange={e => updFtr(i, 'multiline', e.target.checked)} />
                               Multilinea
+                            </label>
+                            <span style={{ color: '#94a3b8' }}>HTR</span>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
+                              <input type="checkbox" checked={f.htr ?? false} onChange={e => updFtr(i, 'htr', e.target.checked)} />
+                              HTR (manoscritto)
                             </label>
                             <span style={{ color: '#94a3b8' }}>X</span>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
