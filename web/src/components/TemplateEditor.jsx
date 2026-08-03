@@ -269,7 +269,7 @@ export default function TemplateEditor({ username, onLogout }) {
   const addHdr = () => {
     const cur = template?.header?.fields || [];
     const hdr = template?.header || { x_min: 0, x_max: 0, y_min: 0, y_max: 200 };
-    setTemplate({ ...template, header: { ...hdr, fields: [...cur, { field: `c${cur.length + 1}`, regex: '', x_min: hdr.x_min ?? 0, y_min: hdr.y_min ?? 0, x_max: hdr.x_max ?? 350, y_max: hdr.y_max ?? 100 }] } });
+    setTemplate({ ...template, header: { ...hdr, fields: [...cur, { field: `c${cur.length + 1}`, regex: '', x_min: hdr.x_min ?? 0, y_min: hdr.y_min ?? 0, x_max: (hdr.x_min ?? 0) + 100, y_max: (hdr.y_min ?? 0) + 50 }] } });
   };
   const updHdr = (i, k, v) => {
     if (!template?.header?.fields) return;
@@ -373,7 +373,7 @@ export default function TemplateEditor({ username, onLogout }) {
   const addFtr = () => {
     const cur = template?.footer?.fields || [];
     const ftr = template?.footer || { y_min: 600, y_max: 800 };
-    setTemplate({ ...template, footer: { ...ftr, fields: [...cur, { field: `f${cur.length + 1}`, regex: '', x_min: 100 + cur.length * 10, y_min: ftr.y_min, x_max: 350, y_max: ftr.y_max }] } });
+    setTemplate({ ...template, footer: { ...ftr, fields: [...cur, { field: `f${cur.length + 1}`, regex: '', x_min: 100 + cur.length * 10, y_min: ftr.y_min, x_max: 100 + cur.length * 10 + 100, y_max: ftr.y_min + 50 }] } });
   };
   const updFtr = (i, k, v) => {
     if (!template?.footer?.fields) return;
