@@ -103,6 +103,8 @@ def extract_header_field(config, full_text, lines, page_images=None):
         x_max = config.get('x_max')
         y_min = config.get('y_min')
         y_max = config.get('y_max')
+        multiline = config.get('multiline', False)
+        flags = re.DOTALL if multiline else 0
         if x_min is not None and x_max is not None and y_min is not None and y_max is not None:
             # OCR zonale mirato se abbiamo immagini (piu' preciso dell'OCR globale)
             if page_images:
@@ -141,7 +143,7 @@ def extract_header_field(config, full_text, lines, page_images=None):
                         try:
                             text = ocr_zone(ocr_img, ix, iy, iw, ih)
                             if text:
-                                m = re.search(config['pattern'], text)
+                                m = re.search(config['pattern'], text, flags)
                                 result = _safe_group(m, group)
                                 if result and result != "N/A":
                                     return result
@@ -155,7 +157,7 @@ def extract_header_field(config, full_text, lines, page_images=None):
                     try:
                         text = ocr_zone(img, x_min, y_min, w, h)
                         if text:
-                            m = re.search(config['pattern'], text)
+                            m = re.search(config['pattern'], text, flags)
                             return _safe_group(m, group) or "N/A"
                     except Exception:
                         pass
@@ -166,10 +168,10 @@ def extract_header_field(config, full_text, lines, page_images=None):
                     for w in row:
                         if x_min <= round(w['x0']) < x_max:
                             words_in_box.append(w['text'])
-            text = " ".join(words_in_box)
+            text = "\n".join(words_in_box) if multiline else " ".join(words_in_box)
         else:
             text = full_text
-        m = re.search(config['pattern'], text)
+        m = re.search(config['pattern'], text, flags)
         return _safe_group(m, group) or "N/A"
 
     if ftype == 'regex_column_filtered':
@@ -405,5 +407,8 @@ def apply_template(template, lines, full_text, page_images=None):
     for field_name, cfg in header_fields.items():
         result[field_name] = extract_header_field(cfg, full_text, lines, page_images=page_images)
     result['righe'] = extract_table(template.get('table'), lines)
+    footer_fields = template.get('footer', {}).get('fields', {})
+    for field_name, cfg in footer_fields.items():
+        result[field_name] = extract_header_field(cfg, full_text, lines, page_images=page_images)
     return result
 

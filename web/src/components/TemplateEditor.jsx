@@ -54,6 +54,7 @@ function normalizeTemplate(tpl) {
       y_min: f.y_min ?? 0,
       x_max: f.x_max ?? 0,
       y_max: f.y_max ?? 0,
+      multiline: f.multiline ?? false,
     }));
   } else if (rawHdrFields && typeof rawHdrFields === 'object') {
     hdrFields = Object.entries(rawHdrFields).map(([key, val]) => ({
@@ -63,6 +64,7 @@ function normalizeTemplate(tpl) {
       y_min: val.y_min ?? 0,
       x_max: val.x_max ?? 0,
       y_max: val.y_max ?? 0,
+      multiline: val.multiline ?? false,
     }));
   }
 
@@ -90,6 +92,7 @@ function normalizeTemplate(tpl) {
       y_min: f.y_min ?? 0,
       x_max: f.x_max ?? 0,
       y_max: f.y_max ?? 0,
+      multiline: f.multiline ?? false,
     }));
   } else if (rawFtrFields && typeof rawFtrFields === 'object') {
     ftrFields = Object.entries(rawFtrFields).map(([key, val]) => ({
@@ -99,6 +102,7 @@ function normalizeTemplate(tpl) {
       y_min: val.y_min ?? 0,
       x_max: val.x_max ?? 0,
       y_max: val.y_max ?? 0,
+      multiline: val.multiline ?? false,
     }));
   }
 
@@ -140,6 +144,7 @@ function denormalizeTemplate(tpl) {
         y_min: f.y_min ?? 0,
         x_max: f.x_max ?? 0,
         y_max: f.y_max ?? 0,
+        multiline: f.multiline ?? false,
       };
     }
   });
@@ -162,6 +167,7 @@ function denormalizeTemplate(tpl) {
         y_min: f.y_min ?? 0,
         x_max: f.x_max ?? 0,
         y_max: f.y_max ?? 0,
+        multiline: f.multiline ?? false,
       };
     }
   });
@@ -269,7 +275,7 @@ export default function TemplateEditor({ username, onLogout }) {
   const addHdr = () => {
     const cur = template?.header?.fields || [];
     const hdr = template?.header || { x_min: 0, x_max: 0, y_min: 0, y_max: 200 };
-    setTemplate({ ...template, header: { ...hdr, fields: [...cur, { field: `c${cur.length + 1}`, regex: '', x_min: hdr.x_min ?? 0, y_min: hdr.y_min ?? 0, x_max: (hdr.x_min ?? 0) + 100, y_max: (hdr.y_min ?? 0) + 50 }] } });
+    setTemplate({ ...template, header: { ...hdr, fields: [...cur, { field: `c${cur.length + 1}`, regex: '.+', multiline: false, x_min: hdr.x_min ?? 0, y_min: hdr.y_min ?? 0, x_max: (hdr.x_min ?? 0) + 100, y_max: (hdr.y_min ?? 0) + 50 }] } });
   };
   const updHdr = (i, k, v) => {
     if (!template?.header?.fields) return;
@@ -348,7 +354,7 @@ export default function TemplateEditor({ username, onLogout }) {
   const addCol = () => {
     const cur = template?.table?.columns || [];
     const tbl = template?.table || { y_min: 200, y_max: 600 };
-    setTemplate({ ...template, table: { ...tbl, columns: [...cur, { header: `c${cur.length + 1}`, regex: '', x_min: 100 + cur.length * 80, x_max: 180 + cur.length * 80 }] } });
+    setTemplate({ ...template, table: { ...tbl, columns: [...cur, { header: `c${cur.length + 1}`, regex: '.+', x_min: 100 + cur.length * 80, x_max: 180 + cur.length * 80 }] } });
   };
   const updCol = (i, k, v) => {
     if (!template?.table?.columns) return;
@@ -373,7 +379,7 @@ export default function TemplateEditor({ username, onLogout }) {
   const addFtr = () => {
     const cur = template?.footer?.fields || [];
     const ftr = template?.footer || { y_min: 600, y_max: 800 };
-    setTemplate({ ...template, footer: { ...ftr, fields: [...cur, { field: `f${cur.length + 1}`, regex: '', x_min: 100 + cur.length * 10, y_min: ftr.y_min, x_max: 100 + cur.length * 10 + 100, y_max: ftr.y_min + 50 }] } });
+    setTemplate({ ...template, footer: { ...ftr, fields: [...cur, { field: `f${cur.length + 1}`, regex: '.+', multiline: false, x_min: 100 + cur.length * 10, y_min: ftr.y_min, x_max: 100 + cur.length * 10 + 100, y_max: ftr.y_min + 50 }] } });
   };
   const updFtr = (i, k, v) => {
     if (!template?.footer?.fields) return;
@@ -541,6 +547,11 @@ export default function TemplateEditor({ username, onLogout }) {
                             <input value={f.field || ''} onChange={e => updHdr(i, 'field', e.target.value)} placeholder="nome campo" style={{ fontSize: 11, width: '100%' }} />
                             <span style={{ color: '#94a3b8' }}>Pattern</span>
                             <input value={f.regex || ''} onChange={e => updHdr(i, 'regex', e.target.value)} placeholder="regex pattern" style={{ fontSize: 11, width: '100%' }} />
+                            <span style={{ color: '#94a3b8' }}>Multi</span>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
+                              <input type="checkbox" checked={f.multiline ?? false} onChange={e => updHdr(i, 'multiline', e.target.checked)} />
+                              Multilinea
+                            </label>
                             <span style={{ color: '#94a3b8' }}>X</span>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -723,6 +734,11 @@ export default function TemplateEditor({ username, onLogout }) {
                             <input value={f.field || ''} onChange={e => updFtr(i, 'field', e.target.value)} placeholder="nome campo" style={{ fontSize: 11, width: '100%' }} />
                             <span style={{ color: '#94a3b8' }}>Pattern</span>
                             <input value={f.regex || ''} onChange={e => updFtr(i, 'regex', e.target.value)} placeholder="regex pattern" style={{ fontSize: 11, width: '100%' }} />
+                            <span style={{ color: '#94a3b8' }}>Multi</span>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
+                              <input type="checkbox" checked={f.multiline ?? false} onChange={e => updFtr(i, 'multiline', e.target.checked)} />
+                              Multilinea
+                            </label>
                             <span style={{ color: '#94a3b8' }}>X</span>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
