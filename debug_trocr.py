@@ -39,13 +39,13 @@ def main():
     ap.add_argument("--h", type=float, required=True)
     ap.add_argument("--permille", action="store_true",
                     help="coordinate in 0-1000 (converti in pixel)")
-    ap.add_argument("--model", default="microsoft/trocr-base-printed")
+    ap.add_argument("--model", default="microsoft/trocr-large-handwritten")
     ap.add_argument("--handwritten", action="store_true",
-                    help="scorciatoia per model=microsoft/trocr-base-handwritten")
+                    help="scorciatoia per model=microsoft/trocr-large-handwritten")
     ap.add_argument("--no-preprocess", action="store_true")
     ap.add_argument("--no-multiline", action="store_true")
     ap.add_argument("--margin", type=float, default=0.10)
-    ap.add_argument("--line-height", type=int, default=64)
+    ap.add_argument("--line-height", type=int, default=384)
     ap.add_argument("--num-beams", type=int, default=8)
     args = ap.parse_args()
 
@@ -70,7 +70,7 @@ def main():
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    model_name = "microsoft/trocr-base-handwritten" if args.handwritten else args.model
+    model_name = "microsoft/trocr-large-handwritten" if args.handwritten else args.model
     preprocess = not args.no_preprocess
     multiline = not args.no_multiline
 

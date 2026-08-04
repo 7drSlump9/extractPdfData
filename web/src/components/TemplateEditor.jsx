@@ -509,6 +509,7 @@ export default function TemplateEditor({ username, onLogout }) {
                       draggable
                       onDragStart={(e) => {
                         e.dataTransfer.setData('application/tag-index', String(i));
+                        e.dataTransfer.setData('application/tag-section', 'header');
                         e.dataTransfer.effectAllowed = 'move';
                         const w = Math.max((f.x_max ?? 0) - (f.x_min ?? 0), 20);
                         const h = Math.max((f.y_max ?? 0) - (f.y_min ?? 0), 10);
@@ -703,6 +704,7 @@ export default function TemplateEditor({ username, onLogout }) {
                       draggable
                       onDragStart={(e) => {
                         e.dataTransfer.setData('application/tag-index', String(i));
+                        e.dataTransfer.setData('application/tag-section', 'footer');
                         e.dataTransfer.effectAllowed = 'move';
                         const w = Math.max((f.x_max ?? 0) - (f.x_min ?? 0), 20);
                         const h = Math.max((f.y_max ?? 0) - (f.y_min ?? 0), 10);

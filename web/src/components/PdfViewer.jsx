@@ -104,11 +104,11 @@ export default function PdfViewer({ file, template, onTagDrop, onHdrResize, onCo
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
           onDrop={(e) => {
             e.preventDefault();
-            if (!onTagDrop) return;
             const raw = e.dataTransfer.getData('application/tag-index');
             if (raw === '') return;
             const index = parseInt(raw, 10);
             if (isNaN(index)) return;
+            const section = e.dataTransfer.getData('application/tag-section');
             const canvas = canvasRef.current;
             if (!canvas) return;
             const rect = canvas.getBoundingClientRect();
@@ -119,8 +119,11 @@ export default function PdfViewer({ file, template, onTagDrop, onHdrResize, onCo
             // Converti in coordinate 0-1000 (permille)
             const pdfX = Math.round((canvasX / canvas.width) * 1000);
             const pdfY = Math.round((canvasY / canvas.height) * 1000) - yOffset;
-            onTagDrop(index, pdfX, pdfY);
-            if (onFtrDrop) onFtrDrop(index, pdfX, pdfY);
+            if (section === 'footer' && onFtrDrop) {
+              onFtrDrop(index, pdfX, pdfY);
+            } else if (onTagDrop) {
+              onTagDrop(index, pdfX, pdfY);
+            }
           }}
         />
         <ZoneOverlay template={template} scale={scale} yOffset={yOffset} canvasScaleX={canvasScaleX} canvasScaleY={canvasScaleY} canvasRefWidth={canvasRef.current?.width || 0} canvasRefHeight={canvasRef.current?.height || 0} onHdrResize={onHdrResize} onColResize={onColResize} onFtrResize={onFtrResize} onZoneClick={onZoneClick} selectedZoneIndex={selectedZoneIndex} onFtrZoneClick={onFtrZoneClick} selectedFtrZoneIndex={selectedFtrZoneIndex} />

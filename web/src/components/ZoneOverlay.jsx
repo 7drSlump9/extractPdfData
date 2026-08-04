@@ -278,7 +278,9 @@ export default function ZoneOverlay({ template, scale, yOffset = 0, canvasScaleX
               } : undefined}
               onDragStart={isDraggable ? (e) => {
                 const idx = parseInt(z.key.split('-')[1], 10);
+                const section = z.key.startsWith('h-') ? 'header' : 'footer';
                 e.dataTransfer.setData('application/tag-index', String(idx));
+                e.dataTransfer.setData('application/tag-section', section);
                 e.dataTransfer.effectAllowed = 'move';
                 if (z.w > 0 && z.h > 0) {
                   const ghost = document.createElement('canvas');

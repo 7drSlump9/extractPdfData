@@ -286,40 +286,69 @@ def _get_trocr(model_name="microsoft/trocr-base-handwritten"):
     return _trocr_cache[model_name]
 
 
-def _prep_line_for_trocr(line_img, preprocess, target_h=64, min_ratio=4.0):
+def _prep_line_for_trocr(line_img, preprocess, target_h=384, min_ratio=1.0,
+                         pad_frac=0.12, sharpen=True):
     """
-    Prepara una riga per TrOCR mantenendo aspect ratio:
-    - grayscale + autocontrast (NO binarizzazione dura)
-    - resize ad altezza fissa target_h mantenendo proporzioni
-    - pad bianco a destra per raggiungere ratio minimo (evita schiacciamento su 384x384)
+    Prepara una riga per TrOCR mantenendo aspect ratio.
+
+    NOTE: i modelli TrOCR (specie i 'large') vogliono input grande e ben
+    contrastato. Passi:
+    - grayscale + autocontrast (NO binarizzazione dura, il modello vuole i grigi)
+    - unsharp mask leggero (aiuta il tratto a penna sottile)
+    - resize altezza fissa target_h (default 384, la risoluzione nativa del ViT)
+      mantenendo le proporzioni
+    - bordo bianco attorno (pad) cosi' le lettere alte/basse non toccano il bordo
+    - pad orizzontale per raggiungere un ratio minimo (evita schiacciamento)
     """
-    from PIL import ImageOps
+    from PIL import ImageOps, ImageFilter
     img = line_img
+    if img.mode != 'L':
+        img = img.convert('L')
     if preprocess:
-        if img.mode != 'L':
-            img = img.convert('L')
         img = ImageOps.autocontrast(img, cutoff=2)
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
+        if sharpen:
+            img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=120, threshold=2))
+
     w, h = img.size
     if h <= 0 or w <= 0:
-        return img
-    # resize altezza fissa mantenendo ratio
-    scale = target_h / h
+        return img.convert('RGB')
+
+    # padding verticale interno (bordo bianco alto/basso)
+    pad = max(2, int(target_h * pad_frac))
+    inner_h = max(1, target_h - 2 * pad)
+
+    # resize mantenendo ratio all'altezza interna
+    scale = inner_h / h
     new_w = max(1, int(w * scale))
-    img = img.resize((new_w, target_h), Image.Resampling.LANCZOS)
-    # pad bianco per ratio minimo
-    min_w = int(target_h * min_ratio)
-    if new_w < min_w:
-        padded = Image.new('RGB', (min_w, target_h), (255, 255, 255))
-        padded.paste(img, (0, 0))
-        img = padded
-    return img
+    resized = img.resize((new_w, inner_h), Image.Resampling.LANCZOS)
+
+    # tela bianca target_h di altezza, con bordi bianchi
+    min_w = max(new_w + 2 * pad, int(target_h * min_ratio))
+    canvas = Image.new('L', (min_w, target_h), 255)
+    canvas.paste(resized, (pad, pad))
+    return canvas.convert('RGB')
 
 
-def _segment_lines(gray_img, row_thresh_ratio=0.02, min_line_h=8):
+def _smooth(arr, k):
+    """Media mobile 1D (finestra k). Serve a stabilizzare il projection profile."""
+    import numpy as np
+    if k <= 1:
+        return arr
+    kernel = np.ones(k, dtype=np.float32) / float(k)
+    return np.convolve(arr, kernel, mode='same')
+
+
+def _segment_lines(gray_img, row_thresh_ratio=0.02, min_line_h=8,
+                   smooth_frac=0.015, merge_gap_frac=0.6, pad_frac=0.25):
     """
     Segmenta un crop in righe di testo via projection profile orizzontale.
+
+    Migliorie rispetto alla versione base:
+    - smoothing del profilo (media mobile) per non spezzare lettere con
+      ascendenti/discendenti (l, t, g, p) o tratti sottili;
+    - merge di segmenti separati da un gap piccolo (< merge_gap_frac * altezza media);
+    - padding verticale su ogni riga cosi' le lettere non vengono tagliate.
+
     Ritorna lista di (top, bottom) in pixel. Se non trova nulla → [].
     """
     import numpy as np
@@ -327,22 +356,53 @@ def _segment_lines(gray_img, row_thresh_ratio=0.02, min_line_h=8):
     g = gray_img.convert('L')
     g = ImageOps.autocontrast(g, cutoff=2)
     arr = np.asarray(g).astype(np.float32)
+    H = arr.shape[0]
+    if H <= 0:
+        return []
     # inchiostro scuro = valori bassi. Densità = quanto scuro per riga.
     darkness = 255.0 - arr
     row_energy = darkness.mean(axis=1)
+    # smoothing: finestra proporzionale all'altezza del crop
+    win = max(1, int(H * smooth_frac))
+    row_energy = _smooth(row_energy, win)
+
     thresh = row_energy.max() * row_thresh_ratio + row_energy.mean() * 0.3
     mask = row_energy > thresh
-    segments = []
+
+    # 1) segmenti grezzi
+    raw = []
     start = None
     for i, on in enumerate(mask):
         if on and start is None:
             start = i
         elif not on and start is not None:
-            if i - start >= min_line_h:
-                segments.append((start, i))
+            raw.append((start, i))
             start = None
-    if start is not None and len(mask) - start >= min_line_h:
-        segments.append((start, len(mask)))
+    if start is not None:
+        raw.append((start, H))
+    if not raw:
+        return []
+
+    # 2) merge di segmenti separati da gap piccolo
+    heights = [b - a for a, b in raw]
+    avg_h = float(np.mean(heights)) if heights else 0.0
+    merge_gap = max(2, int(avg_h * merge_gap_frac))
+    merged = [list(raw[0])]
+    for a, b in raw[1:]:
+        if a - merged[-1][1] <= merge_gap:
+            merged[-1][1] = b
+        else:
+            merged.append([a, b])
+
+    # 3) filtra righe troppo basse + padding verticale
+    pad = max(1, int(avg_h * pad_frac))
+    segments = []
+    for a, b in merged:
+        if b - a < min_line_h:
+            continue
+        top = max(0, a - pad)
+        bottom = min(H, b + pad)
+        segments.append((top, bottom))
     return segments
 
 
@@ -355,8 +415,11 @@ def htr_zone_trocr(image, x, y, w, h, config=None):
     num_beams = cfg.get('num_beams', 5)
     max_length = cfg.get('max_length', 64)
     model_name = cfg.get('model', "microsoft/trocr-base-handwritten")
-    target_h = cfg.get('lineHeight', 64)
+    target_h = cfg.get('lineHeight', 384)
     multiline = cfg.get('multiline', True)
+    length_penalty = cfg.get('lengthPenalty', 1.0)
+    no_repeat_ngram = cfg.get('noRepeatNgramSize', 3)
+
 
     if w <= 0 or h <= 0:
         print(f"[TrOCR] zona degenere {w}x{h}, skip")
@@ -404,6 +467,8 @@ def htr_zone_trocr(image, x, y, w, h, config=None):
                     num_beams=num_beams,
                     max_length=max_length,
                     early_stopping=True,
+                    length_penalty=length_penalty,
+                    no_repeat_ngram_size=no_repeat_ngram,
                 )
             line_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
             if line_text:
