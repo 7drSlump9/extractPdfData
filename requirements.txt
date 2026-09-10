@@ -4,7 +4,7 @@ Pillow
 pytesseract
 sqlalchemy
 flask
-flask-cors
+numpy
 easyocr
 transformers
 torch
