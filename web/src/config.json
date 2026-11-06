@@ -1,0 +1,44 @@
+{
+  "ocrDpi": 200,
+  "aiBootstrap": { "enabled": true },
+  "barcode": {
+    "renderDpi": 300,
+    "searchMargin": 0.10,
+    "tryRotations": true,
+    "ai": { "enabled": false, "model": "google/gemini-2.5-flash", "timeout": 60 }
+  },
+  "sectionColors": {
+    "header": "#1e3a8a",
+    "table": "#14532d",
+    "footer": "#581c87",
+    "signature": "#78350f",
+    "riepilogo": "#164e63"
+  },
+  "htr": {
+    "_comment_engine": "'easyocr' per testo stampato, 'trocr' per manoscritto",
+    "engine": "trocr",
+    "easyocr": {
+      "_comment": "Parametri solo per motore easyocr",
+      "margin": 0.20,
+      "upscaleMin": 300,
+      "textThreshold": 0.3,
+      "contrastThs": 0.1,
+      "adjustContrast": 0.5,
+      "language": "it"
+    },
+    "trocr": {
+      "_comment": "Parametri solo per motore trocr",
+      "_comment_model": "'microsoft/trocr-base-printed' per STAMPATELLO, 'microsoft/trocr-base-handwritten' per CORSIVO/manoscritto",
+      "margin": 0.10,
+      "model": "microsoft/trocr-base-printed",
+      "preprocess": true,
+      "multiline": true,
+      "lineHeight": 384,
+      "num_beams": 8,
+      "max_length": 64,
+      "lengthPenalty": 1.0,
+      "noRepeatNgramSize": 3
+    }
+
+  }
+}

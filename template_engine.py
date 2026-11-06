@@ -96,6 +96,8 @@ def match_template(templates, full_text, min_match_ratio=1.0):
 # Estrazione campi di intestazione
 # ---------------------------------------------------------------------------
 def extract_header_field(config, full_text, lines, page_images=None, htr_config=None):
+    if config.get('barcode', False) or config.get('type') == 'barcode':
+        return extract_barcode_field(config, page_images)['value']
     ftype = config.get('type', 'regex_full_text')
     group = config.get('group', 1)
 
@@ -425,7 +427,64 @@ def _load_htr_config():
     return {}
 
 
-def apply_template(template, lines, full_text, page_images=None):
+def template_fields(template):
+    fields = dict(template.get('header', {}).get('fields', template.get('header_fields', {})))
+    fields.update(template.get('footer', {}).get('fields', {}))
+    return fields
+
+
+def has_barcode_fields(template):
+    return any(c.get('barcode', False) or c.get('type') == 'barcode'
+               for c in template_fields(template or {}).values())
+
+
+def barcode_only_template(template):
+    fields = template_fields(template or {})
+    return bool(fields) and all(c.get('barcode', False) or c.get('type') == 'barcode'
+                               for c in fields.values()) and not (template.get('table') or {}).get('columns')
+
+
+def render_template_pages(pdf, template):
+    """List indexed by page number; render only pages needed by barcode fields."""
+    from template_store import load_config
+    dpi = int(load_config()['barcode']['renderDpi'])
+    if not 72 <= dpi <= 1200:
+        raise ValueError('barcode.renderDpi deve essere tra 72 e 1200')
+    needed = {int(c.get('page', 1)) for c in template_fields(template).values()
+              if c.get('barcode', False) or c.get('type') == 'barcode'}
+    if any(p < 1 or p > len(pdf.pages) for p in needed):
+        raise ValueError('Pagina barcode non presente nel PDF')
+    images = [None] * len(pdf.pages)
+    for number in needed:
+        page = pdf.pages[number - 1]
+        img = page.to_image(resolution=dpi).original.copy()
+        images[number - 1] = (img, (float(page.width), float(page.height)), img)
+    return images
+
+
+def extract_barcode_field(config, page_images):
+    from barcode_reader import barcode_zone
+    page = int(config.get('page', 1))
+    if page < 1 or not page_images or page > len(page_images) or page_images[page - 1] is None:
+        raise ValueError(f'Immagine pagina {page} assente per zona barcode')
+    image = page_images[page - 1][0]
+    x0, x1, y0, y1 = [float(config[k]) for k in ('x_min', 'x_max', 'y_min', 'y_max')]
+    if not (0 <= x0 < x1 <= 1000 and 0 <= y0 < y1 <= 1000):
+        raise ValueError('Coordinate barcode non valide: usare 0 <= min < max <= 1000')
+    width, height = image.size
+    result = barcode_zone(image, x0 * width / 1000, y0 * height / 1000,
+                          (x1 - x0) * width / 1000, (y1 - y0) * height / 1000,
+                          ai_fallback=config.get('ai_fallback'))
+    pattern = config.get('pattern')
+    if result['value'] != 'N/A' and pattern and pattern != '.+':
+        match = re.search(pattern, result['value'])
+        if not match:
+            return {'value': 'N/A', 'method': result['method'], 'verified': False}
+        result['value'] = _safe_group(match, config.get('group', 1))
+    return result
+
+
+def apply_template(template, lines, full_text, page_images=None, native_text=False):
     result = {"formato": template.get('name', 'UNKNOWN')}
     htr_config = _load_htr_config()
     # Retrocompatibilità: header.fields (nuovo) oppure header_fields (vecchio)
@@ -433,10 +492,22 @@ def apply_template(template, lines, full_text, page_images=None):
     if header_fields is None:
         header_fields = template.get('header_fields', {})
     for field_name, cfg in header_fields.items():
-        result[field_name] = extract_header_field(cfg, full_text, lines, page_images=page_images, htr_config=htr_config)
+        if cfg.get('barcode', False) or cfg.get('type') == 'barcode':
+            reading = extract_barcode_field(cfg, page_images)
+            result[field_name] = reading['value']
+            result.setdefault('_barcode', {})[field_name] = reading
+        else:
+            field_images = None if native_text and not cfg.get('htr') else page_images
+            result[field_name] = extract_header_field(cfg, full_text, lines, page_images=field_images, htr_config=htr_config)
     result['righe'] = extract_table(template.get('table'), lines)
     footer_fields = template.get('footer', {}).get('fields', {})
     for field_name, cfg in footer_fields.items():
-        result[field_name] = extract_header_field(cfg, full_text, lines, page_images=page_images, htr_config=htr_config)
+        if cfg.get('barcode', False) or cfg.get('type') == 'barcode':
+            reading = extract_barcode_field(cfg, page_images)
+            result[field_name] = reading['value']
+            result.setdefault('_barcode', {})[field_name] = reading
+        else:
+            field_images = None if native_text and not cfg.get('htr') else page_images
+            result[field_name] = extract_header_field(cfg, full_text, lines, page_images=field_images, htr_config=htr_config)
     return result
 

@@ -1,0 +1,28 @@
+{
+  "name": "barcode001",
+  "description": "",
+  "signature": [],
+  "customer_file": "UNKNOWN",
+  "header": {
+    "x_min": 0,
+    "x_max": 1000,
+    "y_min": 0,
+    "y_max": 297,
+    "fields": {
+      "barcode_top": {
+        "ai_fallback": null,
+        "barcode": true,
+        "group": 1,
+        "htr": false,
+        "multiline": false,
+        "page": 1,
+        "pattern": ".+",
+        "type": "barcode",
+        "x_max": 1081,
+        "x_min": 544,
+        "y_max": 281,
+        "y_min": 12
+      }
+    }
+  }
+}

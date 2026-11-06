@@ -10,6 +10,7 @@ from functools import wraps
 
 from db import db
 from template_engine import match_template, apply_template
+from template_store import resolve_template, list_templates, write_template_file
 
 app = Flask(__name__)
 app.secret_key = "cambiami-in-produzione-1234"  # TODO: env var
@@ -63,15 +64,16 @@ def api_whoami():
 @login_required
 def api_list_templates():
     customer = request.args.get("customer_name")
-    templates = db.get_all_templates(customer_name=customer or None)
+    templates = list_templates(customer_name=customer or None)
     # Solo name, description, customer_name (niente json_data pieno)
     result = []
-    for t in templates:
+    for t, origin in templates:
         result.append({
             "name": t.get("name", "?"),
             "description": t.get("description", ""),
             "customer_name": t.get("customer_file", "UNKNOWN"),
             "signature_count": len(t.get("signature", [])),
+            "origin": origin,
         })
     return jsonify(result)
 
@@ -79,10 +81,29 @@ def api_list_templates():
 @app.route("/api/templates/<name>", methods=["GET"])
 @login_required
 def api_get_template(name):
-    template = db.get_template_by_name(name)
+    try:
+        template, origin = resolve_template(name, request.args.get('customer_name') or None)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     if not template:
         return jsonify({"error": "Template non trovato"}), 404
-    return jsonify(template)
+    return jsonify({**template, '_origin': origin})
+
+
+@app.route('/api/templates/<name>/write-file', methods=['POST'])
+@login_required
+def api_write_template_file(name):
+    data = request.get_json() or {}
+    template = data.get('template')
+    if not isinstance(template, dict) or template.get('name') != name:
+        return jsonify({'error': 'Nome template non coerente'}), 400
+    try:
+        path = write_template_file(template, overwrite=data.get('overwrite') is True)
+        return jsonify({'ok': True, 'disk': str(path), 'origin': 'file'})
+    except FileExistsError as exc:
+        return jsonify({'error': str(exc), 'exists': True}), 409
+    except (ValueError, OSError) as exc:
+        return jsonify({'error': str(exc)}), 400
 
 
 @app.route("/api/templates", methods=["POST"])
@@ -142,20 +163,20 @@ def api_test_pdf():
         import io
         pdf_bytes = file.read()
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            from template_engine import get_lines, line_text, apply_template
-            all_lines = []
-            y_offset = 0.0
-            text_parts = []
-            for page in pdf.pages:
-                page = page.dedupe_chars(tolerance=1)
-                page_lines = get_lines(page)
-                for top, row in page_lines:
-                    all_lines.append((top + y_offset, row))
-                text_parts.append("\n".join(line_text(row) for _, row in page_lines))
-                y_offset += float(page.height or 0) + 10.0
-            full_text = "\n".join(text_parts)
-
-        result = apply_template(template, all_lines, full_text)
+            from main import _collect_all_pages, _has_usable_text, _collect_pages_via_ocr
+            from template_engine import has_barcode_fields, barcode_only_template, render_template_pages
+            all_lines, full_text = _collect_all_pages(pdf)
+            native_text = _has_usable_text(full_text)
+            images = render_template_pages(pdf, template) if has_barcode_fields(template) else None
+            if images and not barcode_only_template(template):
+                if not _has_usable_text(full_text):
+                    all_lines, full_text, ocr_images, _ = _collect_pages_via_ocr(pdf)
+                    images = [im if im is not None else ocr_im for im, ocr_im in zip(images, ocr_images)]
+                else:
+                    images = [(p.to_image(resolution=200).original.copy(),
+                               (float(p.width), float(p.height))) if im is None else im
+                              for p, im in zip(pdf.pages, images)]
+            result = apply_template(template, all_lines, full_text, page_images=images, native_text=native_text)
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -186,7 +207,7 @@ def api_test_template():
 
 # ──────────────────────── REACT STATIC (produzione) ────────────────────────
 
-WEB_BUILD = Path(__file__).parent / "web" / "build"
+WEB_BUILD = Path(__file__).parent / "web" / "dist"
 
 
 @app.route("/", defaults={"path": ""})

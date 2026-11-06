@@ -17,16 +17,16 @@ Due programmi, un unico motore condiviso.
                            │  ai_bootstrap.py    AI bootstrap    │
                            └──────────┬────────────┬─────────────┘
                                       │            │
-┌─────────────────────────────────────▼──┐  ┌──────▼──────────────────────────┐
-│           PROGRAMMA 1 (CLI)            │  │       PROGRAMMA 2 (WEB)          │
-│  main.py                              │  │  server.py   Flask API           │
-│                                       │  │  web/        React + Vite        │
-│  Estrazione batch da terminale:       │  │                                  │
-│  - PDF nativo (pdfplumber)            │  │  Editor visuale template:        │
-│  - PDF scansionato (OCR Tesseract)    │  │  - Carica PDF + overlay zone     │
-│  - Foto/immagini (OCR + auto-rotaz.)  │  │  - Definisci colonne X           │
-│  - Bootstrap AI per layout sconosciuti│  │  - Testa estrazione in tempo reale│
-└───────────────────────────────────────┘  └──────────────────────────────────┘
+┌─────────────────────────────────────▼──┐  ┌──────▼─────────────────────────────┐
+│           PROGRAMMA 1 (CLI)            │  │       PROGRAMMA 2 (WEB)            │
+│  main.py                               │  │  server.py   Flask API             │
+│                                        │  │  web/        React + Vite          │
+│  Estrazione batch da terminale:        │  │                                    │
+│  - PDF nativo (pdfplumber)             │  │  Editor visuale template:          │
+│  - PDF scansionato (OCR Tesseract)     │  │  - Carica PDF + overlay zone       │
+│  - Foto/immagini (OCR + auto-rotaz.)   │  │  - Definisci colonne X             │
+│  - Bootstrap AI per layout sconosciuti │  │  - Testa estrazione in tempo reale │
+└────────────────────────────────────────┘  └────────────────────────────────────┘
 ```
 
 Il core **(template_engine.py)** fa tutto il lavoro pesante:
@@ -240,6 +240,25 @@ python server.py
 5. **Test** — esegue estrazione in tempo reale sul PDF caricato
 6. **Salva** — persiste template nel DB (con backup versione precedente)
 Output salvato in `output/<nomefile>_estratto.json` e loggato nel DB.
+
+### Zone barcode Code128 e template su file
+
+L'estrattore mantiene header, table e footer. Un campo header/footer può essere
+una zona barcode (`type: "barcode"` oppure `barcode: true`), con rettangolo di
+ricerca in coordinate 0-1000 e pagina numerata da 1.
+
+- Lettura template: `templates/decode/NOME.json` prima, DB se il file manca.
+- **Salva** nell'editor scrive solo il DB; **Scrivi template su file** scrive
+  esplicitamente il file sul backend, con conferma e backup `.json.bak`.
+- `web/src/config.json`, sezione `barcode.ai.enabled`, controlla il fallback
+  immagine AI (default false). `aiBootstrap.enabled` è il permesso separato per
+  creare template mancanti; `-no-ai-bootstrap` lo disabilita per la CLI.
+- Per template di soli barcode non serve Tesseract. Nei template misti restano
+  i requisiti OCR/HTR esistenti.
+- Risultati nel JSON storico, dettagli in `_barcode`; exit code 1 se un barcode
+  non viene letto. Il checksum riduce gli errori, non garantisce certezza assoluta.
+
+Manuale completo: [docs/MANUALE_DECODE.md](docs/MANUALE_DECODE.md).
 ---
 
 ## Installazione

@@ -1,0 +1,15 @@
+{
+  "name": "_esempio_barcode",
+  "customer_file": "ESEMPIO",
+  "description": "Riquadro Code128 in alto a destra. Copiare e adattare.",
+  "header": {
+    "fields": {
+      "barcode": {
+        "type": "barcode", "barcode": true,
+        "pattern": ".+", "group": 1, "page": 1,
+        "x_min": 500, "x_max": 1000, "y_min": 0, "y_max": 250,
+        "ai_fallback": false
+      }
+    }
+  }
+}

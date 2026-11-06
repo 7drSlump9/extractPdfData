@@ -20,6 +20,8 @@ import pdfplumber
 
 from template_engine import get_lines, line_text, match_template, apply_template
 from db import db
+from template_store import load_config, resolve_template
+from template_engine import has_barcode_fields, barcode_only_template, render_template_pages
 
 # Carica configurazione da config.json (condiviso con frontend)
 CONFIG_PATH = Path(__file__).parent / "web" / "src" / "config.json"
@@ -209,6 +211,8 @@ def _match_or_none(lines, full_text, customer_name="UNKNOWN", fuzzy=False, page_
 
 
 def _bootstrap_ai(lines, full_text, mode, customer_name="UNKNOWN", template_name=None):
+    if not load_config().get('aiBootstrap', {}).get('enabled', True) or '-no-ai-bootstrap' in sys.argv:
+        raise RuntimeError(f"Template '{template_name}' assente. Creazione AI disabilitata.")
     if not _has_usable_text(full_text):
         raise RuntimeError(
             "Impossibile chiamare l'AI: nessun testo/layout disponibile dal documento. "
@@ -228,9 +232,9 @@ def _bootstrap_ai(lines, full_text, mode, customer_name="UNKNOWN", template_name
 
 
 def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", template_name=None):
-    tpl = db.get_template_by_name(template_name) if template_name else None
+    tpl, origin = resolve_template(template_name, customer_name if customer_name != 'UNKNOWN' else None)
     if tpl:
-        print(f"Template '{template_name}' trovato nel DB. Applico direttamente.")
+        print(f"Template '{template_name}' trovato ({origin}). Applico direttamente.")
         dati = apply_template(tpl, lines, full_text)
         return _attach_meta(
             dati,
@@ -291,9 +295,9 @@ def _estrai_native(lines, full_text, source="native", customer_name="UNKNOWN", t
 
 
 def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", template_name=None, page_images=None):
-    tpl = db.get_template_by_name(template_name) if template_name else None
+    tpl, origin = resolve_template(template_name, customer_name if customer_name != 'UNKNOWN' else None)
     if tpl:
-        print(f"Template '{template_name}' trovato nel DB. Applico direttamente.")
+        print(f"Template '{template_name}' trovato ({origin}). Applico direttamente.")
         dati = apply_template(tpl, lines, full_text, page_images=page_images)
         return _attach_meta(
             dati,
@@ -370,8 +374,29 @@ def _estrai_ocr(lines, full_text, source="ocr_image", customer_name="UNKNOWN", t
 
 
 def estrai_ordine(pdf_path, customer_name="UNKNOWN", template_name=None):
+    settings = load_config()
+    tpl, origin = resolve_template(template_name, customer_name if customer_name != 'UNKNOWN' else None)
+    if not tpl and (not settings['aiBootstrap']['enabled'] or '-no-ai-bootstrap' in sys.argv):
+        raise RuntimeError(f"Template '{template_name}' assente. Creazione AI disabilitata.")
     with pdfplumber.open(pdf_path) as pdf:
         lines, full_text = _collect_all_pages(pdf)
+
+        if tpl and has_barcode_fields(tpl):
+            native_text = _has_usable_text(full_text)
+            images = render_template_pages(pdf, tpl)
+            if not barcode_only_template(tpl) and not _has_usable_text(full_text):
+                lines, full_text, ocr_images, _ = _collect_pages_via_ocr(pdf)
+                images = [im if im is not None else ocr_im for im, ocr_im in zip(images, ocr_images)]
+            elif not barcode_only_template(tpl):
+                # Mixed OCR/HTR fields still need actual images on all pages.
+                images = [(p.to_image(resolution=PDF_OCR_DPI).original.copy(),
+                           (float(p.width), float(p.height))) if im is None else im
+                          for p, im in zip(pdf.pages, images)]
+            print(f"Template '{template_name}' ({origin}), zone barcode.")
+            return _attach_meta(apply_template(tpl, lines, full_text, page_images=images, native_text=native_text),
+                                source='native' if native_text else 'ocr_pdf',
+                                extraction_mode='template', template_saved=True,
+                                generato_da_ai=False, customer_name=customer_name)
 
         if _has_usable_text(full_text):
             return _estrai_native(lines, full_text, source="native", customer_name=customer_name, template_name=template_name)
@@ -403,6 +428,21 @@ def estrai_ordine(pdf_path, customer_name="UNKNOWN", template_name=None):
 
 
 def estrai_ordine_immagini(image_paths, customer_name="UNKNOWN", template_name=None):
+    tpl, _ = resolve_template(template_name, customer_name if customer_name != 'UNKNOWN' else None)
+    if tpl and has_barcode_fields(tpl):
+        from PIL import Image, ImageOps
+        images = []
+        for path in image_paths:
+            with Image.open(path) as source:
+                image = ImageOps.exif_transpose(source).convert('RGB')
+                images.append((image, image.size, image))
+        lines, full_text = [], ''
+        if not barcode_only_template(tpl):
+            from image_ocr import collect_lines_from_images
+            lines, full_text = collect_lines_from_images(image_paths)
+        return _attach_meta(apply_template(tpl, lines, full_text, page_images=images),
+                            source='ocr_image', extraction_mode='template', template_saved=True,
+                            generato_da_ai=False, customer_name=customer_name)
     from image_ocr import collect_lines_from_images, validate_image_paths
 
     paths = validate_image_paths(image_paths)
@@ -454,11 +494,12 @@ def _print_usage():
     print()
     print("Opzioni (ordine libero):")
     print("  -customer           Nome cliente (obbligatorio)")
-    print("  -template (-t)      Nome template (obbligatorio). Se esiste nel DB lo usa, altrimenti lo crea con AI.")
+    print("  -template (-t)      Nome template: prima file templates/decode/NOME.json, poi DB, poi AI se consentita.")
     print("  -outputTemplatePath Path output JSON (opzionale, default: output/<file>_estratto.json)")
     print("  -append             Appende al JSON esistente (default: false)")
     print("  -eo                 PDF: testo nativo oppure OCR se scansione")
     print("  -eoi                Immagini/foto (OCR)")
+    print("  -no-ai-bootstrap    Non crea template mancanti con AI (prima di -eo/-eoi)")
 
 
 def _save_json(dati, stem_source, output_path=None, append=False):
@@ -487,7 +528,7 @@ def _save_json(dati, stem_source, output_path=None, append=False):
     with open(json_output, "w", encoding="utf-8") as f:
         json.dump(dati, f, indent=2, ensure_ascii=False)
     print(f"\n\nJSON salvato in: {json_output}")
-    if dati.get("generato_da_ai"):
+    if isinstance(dati, dict) and dati.get("generato_da_ai"):
         if dati.get("extraction_mode") == "ai_oneshot":
             print("NOTA: estrazione AI one-shot. Verifica i dati prima della produzione.")
         else:
@@ -530,6 +571,8 @@ if __name__ == "__main__":
                 sys.exit(1)
             output_path = args[i + 1]
             i += 2
+        elif args[i] == "-no-ai-bootstrap":
+            i += 1
         elif args[i] == "-append":
             append_mode = True
             i += 1
@@ -584,8 +627,10 @@ if __name__ == "__main__":
             document_name=pdf_file,
             template_name=dati.get("formato", "UNKNOWN"),
             output_json=dati,
-            success=True,
+            success=all(v['value'] != 'N/A' for v in dati.get('_barcode', {}).values()),
         )
+        if any(v['value'] == 'N/A' for v in dati.get('_barcode', {}).values()):
+            sys.exit(1)
 
     elif comando == "-eoi":
         if not comando_args:
@@ -615,8 +660,10 @@ if __name__ == "__main__":
             document_name=comando_args[0],
             template_name=dati.get("formato", "UNKNOWN"),
             output_json=dati,
-            success=True,
+            success=all(v['value'] != 'N/A' for v in dati.get('_barcode', {}).values()),
         )
+        if any(v['value'] == 'N/A' for v in dati.get('_barcode', {}).values()):
+            sys.exit(1)
 
     else:
         print(f"Errore: comando sconosciuto '{comando}'")

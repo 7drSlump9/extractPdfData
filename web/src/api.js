@@ -34,6 +34,11 @@ export async function saveTemplate(template) {
   return data;
 }
 
+export async function writeTemplateFile(template, overwrite = false) {
+  const { data } = await api.post(`/templates/${encodeURIComponent(template.name)}/write-file`, { template, overwrite });
+  return data;
+}
+
 export async function testTemplate({ template, lines, fullText }) {
   const { data } = await api.post('/test-template', { template, lines, full_text: fullText });
   return data;

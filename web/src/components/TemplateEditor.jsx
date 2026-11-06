@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { getTemplates, getTemplate, saveTemplate, testPdfTemplate } from '../api';
+import { getTemplates, getTemplate, saveTemplate, writeTemplateFile, testPdfTemplate } from '../api';
 import PdfViewer from './PdfViewer';
 import ErrorBoundary from './ErrorBoundary';
 import config from '../config.json';
@@ -48,6 +48,7 @@ function normalizeTemplate(tpl) {
   let hdrFields = [];
   if (Array.isArray(rawHdrFields)) {
     hdrFields = rawHdrFields.map(f => ({
+      ...f,
       field: f.field || f.name || '',
       regex: f.regex || f.pattern || '',
       x_min: f.x_min ?? 0,
@@ -56,9 +57,13 @@ function normalizeTemplate(tpl) {
       y_max: f.y_max ?? 0,
       multiline: f.multiline ?? false,
       htr: f.htr ?? false,
+      barcode: f.barcode ?? (f.type === 'barcode'),
+      page: f.page ?? 1,
+      ai_fallback: f.ai_fallback ?? null,
     }));
   } else if (rawHdrFields && typeof rawHdrFields === 'object') {
     hdrFields = Object.entries(rawHdrFields).map(([key, val]) => ({
+      ...val,
       field: key,
       regex: val.pattern || val.regex || '',
       x_min: val.x_min ?? 0,
@@ -67,6 +72,9 @@ function normalizeTemplate(tpl) {
       y_max: val.y_max ?? 0,
       multiline: val.multiline ?? false,
       htr: val.htr ?? false,
+      barcode: val.barcode ?? (val.type === 'barcode'),
+      page: val.page ?? 1,
+      ai_fallback: val.ai_fallback ?? null,
     }));
   }
 
@@ -88,6 +96,7 @@ function normalizeTemplate(tpl) {
   let ftrFields = [];
   if (Array.isArray(rawFtrFields)) {
     ftrFields = rawFtrFields.map(f => ({
+      ...f,
       field: f.field || f.name || '',
       regex: f.regex || f.pattern || '',
       x_min: f.x_min ?? 0,
@@ -96,9 +105,13 @@ function normalizeTemplate(tpl) {
       y_max: f.y_max ?? 0,
       multiline: f.multiline ?? false,
       htr: f.htr ?? false,
+      barcode: f.barcode ?? (f.type === 'barcode'),
+      page: f.page ?? 1,
+      ai_fallback: f.ai_fallback ?? null,
     }));
   } else if (rawFtrFields && typeof rawFtrFields === 'object') {
     ftrFields = Object.entries(rawFtrFields).map(([key, val]) => ({
+      ...val,
       field: key,
       regex: val.pattern || val.regex || '',
       x_min: val.x_min ?? 0,
@@ -107,30 +120,33 @@ function normalizeTemplate(tpl) {
       y_max: val.y_max ?? 0,
       multiline: val.multiline ?? false,
       htr: val.htr ?? false,
+      barcode: val.barcode ?? (val.type === 'barcode'),
+      page: val.page ?? 1,
+      ai_fallback: val.ai_fallback ?? null,
     }));
   }
 
   return {
     ...tpl,
-    header: {
+    header: (tpl.header || tpl.header_fields) ? {
       x_min: rawHeader.x_min ?? 0,
       x_max: rawHeader.x_max ?? 0,
       y_min: rawHeader.y_min ?? 0,
       y_max: rawHeader.y_max ?? 200,
       fields: hdrFields,
-    },
-    table: {
+    } : undefined,
+    table: tpl.table ? {
       ...rawTable,
       y_min: rawTable.y_min ?? 200,
       y_max: rawTable.y_max ?? 600,
       columns: cols,
       end_markers: Array.isArray(rawTable.end_markers) ? rawTable.end_markers : [],
-    },
-    footer: {
+    } : undefined,
+    footer: tpl.footer ? {
       y_min: rawFooter.y_min ?? 600,
       y_max: rawFooter.y_max ?? 800,
       fields: ftrFields,
-    },
+    } : undefined,
     signature: Array.isArray(tpl.signature) ? tpl.signature : [],
   };
 }
@@ -141,15 +157,19 @@ function denormalizeTemplate(tpl) {
   (tpl.header?.fields || []).forEach(f => {
     if (f.field) {
       hdrFieldsObj[f.field] = {
-        type: 'regex_full_text',
+        ...Object.fromEntries(Object.entries(f).filter(([key]) => !['field', 'regex'].includes(key))),
+        type: f.barcode ? 'barcode' : (f.type === 'barcode' ? 'regex_full_text' : (f.type || 'regex_full_text')),
         pattern: f.regex || '',
-        group: 1,
+        group: f.group ?? 1,
         x_min: f.x_min ?? 0,
         y_min: f.y_min ?? 0,
         x_max: f.x_max ?? 0,
         y_max: f.y_max ?? 0,
         multiline: f.multiline ?? false,
         htr: f.htr ?? false,
+        barcode: f.barcode ?? false,
+        page: f.page ?? 1,
+        ai_fallback: f.ai_fallback ?? null,
       };
     }
   });
@@ -165,15 +185,19 @@ function denormalizeTemplate(tpl) {
   (tpl.footer?.fields || []).forEach(f => {
     if (f.field) {
       ftrFieldsObj[f.field] = {
-        type: 'regex_full_text',
+        ...Object.fromEntries(Object.entries(f).filter(([key]) => !['field', 'regex'].includes(key))),
+        type: f.barcode ? 'barcode' : (f.type === 'barcode' ? 'regex_full_text' : (f.type || 'regex_full_text')),
         pattern: f.regex || '',
-        group: 1,
+        group: f.group ?? 1,
         x_min: f.x_min ?? 0,
         y_min: f.y_min ?? 0,
         x_max: f.x_max ?? 0,
         y_max: f.y_max ?? 0,
         multiline: f.multiline ?? false,
         htr: f.htr ?? false,
+        barcode: f.barcode ?? false,
+        page: f.page ?? 1,
+        ai_fallback: f.ai_fallback ?? null,
       };
     }
   });
@@ -183,14 +207,15 @@ function denormalizeTemplate(tpl) {
     description: tpl.description || '',
     signature: tpl.signature || [],
     customer_file: tpl.customer_file || 'UNKNOWN',
-    header: {
+    ...(tpl.header ? { header: {
       x_min: tpl.header?.x_min ?? 0,
       x_max: tpl.header?.x_max ?? 0,
       y_min: tpl.header?.y_min ?? 0,
       y_max: tpl.header?.y_max ?? 200,
       fields: hdrFieldsObj,
-    },
-    table: {
+    } } : {}),
+    ...(tpl.table ? { table: {
+      ...tpl.table,
       y_min: tpl.table?.y_min ?? 200,
       y_max: tpl.table?.y_max ?? 600,
       layout: tpl.table?.layout || 'rows',
@@ -199,19 +224,26 @@ function denormalizeTemplate(tpl) {
       row_detect_pattern: tpl.table?.row_detect_pattern || '',
       skip_line_if_matches: tpl.table?.skip_line_if_matches || '',
       columns: cols,
-    },
-    footer: {
+    } } : {}),
+    ...(tpl.footer ? { footer: {
       y_min: tpl.footer?.y_min ?? 600,
       y_max: tpl.footer?.y_max ?? 800,
       fields: ftrFieldsObj,
-    },
+    } } : {}),
   };
+}
+
+function hasTemplateContent(tpl) {
+  return !!((tpl.header?.fields || []).some(f => f.field?.trim())
+    || (tpl.table?.columns || []).some(c => c.header?.trim())
+    || (tpl.footer?.fields || []).some(f => f.field?.trim()));
 }
 
 export default function TemplateEditor({ username, onLogout }) {
   const [template, setTemplate] = useState(null);
   const [templateName, setTemplateName] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const [origin, setOrigin] = useState('nuovo');
   const [pdfFile, setPdfFile] = useState(null);
   const [templates, setTemplates] = useState([]);
   const [message, setMessage] = useState('');
@@ -224,6 +256,31 @@ export default function TemplateEditor({ username, onLogout }) {
 
   const msg = (text, ok) => { setMessage(text); setMsgOk(!!ok); };
 
+  const handleNewTemplate = (barcode = false) => {
+    if (template && !window.confirm('Creare un nuovo template? Le modifiche non salvate al template aperto verranno perse.')) return;
+    const fields = barcode ? {
+      codice_documento: {
+        type: 'barcode', barcode: true, pattern: '.+', group: 1,
+        page: 1, x_min: 500, x_max: 1000, y_min: 0, y_max: 250,
+        htr: false, ai_fallback: null,
+      },
+    } : {};
+    setTemplate(normalizeTemplate({
+      name: '', description: '', customer_file: customerName || 'UNKNOWN', signature: [],
+      header: { x_min: 0, x_max: 1000, y_min: 0, y_max: barcode ? 250 : 200, fields },
+      ...(barcode ? {} : {
+        table: { y_min: 200, y_max: 600, columns: [] },
+        footer: { y_min: 600, y_max: 800, fields: {} },
+      }),
+    }));
+    setTemplateName('');
+    setOrigin('nuovo');
+    setOpenHdrIdx(barcode ? 0 : null);
+    setOpenColIdx(null);
+    setOpenFtrIdx(null);
+    msg(barcode ? 'Template barcode creato. Imposta nome, cliente e riquadro.' : 'Template vuoto creato. Imposta nome e aggiungi campi con +.', true);
+  };
+
   const loadTemplates = async () => {
     try {
       const list = await getTemplates(customerName || '');
@@ -232,12 +289,37 @@ export default function TemplateEditor({ username, onLogout }) {
     } catch (e) { msg(safeErrMsg(e), false); }
   };
 
+  const removeSection = (section) => {
+    const current = template?.[section];
+    if (!current) return;
+    const count = (section === 'table' ? current.columns : current.fields)?.length || 0;
+    if (count && !window.confirm(`Rimuovere ${section} con ${count} campi/colonne?`)) return;
+    const next = { ...template };
+    delete next[section];
+    if (section === 'header') delete next.header_fields;
+    setTemplate(next);
+    setOpenHdrIdx(null);
+    setOpenColIdx(null);
+    setOpenFtrIdx(null);
+    msg('Sezione rimossa. Salva per applicare.', true);
+  };
+
+  const addSection = (section) => {
+    const defaults = {
+      header: { x_min: 0, x_max: 1000, y_min: 0, y_max: 200, fields: [] },
+      table: { y_min: 200, y_max: 600, columns: [] },
+      footer: { y_min: 600, y_max: 800, fields: [] },
+    };
+    setTemplate({ ...template, [section]: defaults[section] });
+  };
+
   const loadFromApi = async (name) => {
     if (!name) return;
     try {
       const tpl = await getTemplate(name, customerName || '');
       if (!tpl || typeof tpl !== 'object') throw new Error('Dati template non validi');
       setTemplate(normalizeTemplate(tpl));
+      setOrigin(tpl._origin || 'db');
       setTemplateName(tpl.name || name);
       setCustomerName(tpl.customer_file || '');
       msg(`OK: ${name}`, true);
@@ -252,6 +334,7 @@ export default function TemplateEditor({ username, onLogout }) {
         const tpl = JSON.parse(ev.target.result);
         if (!tpl || typeof tpl !== 'object') throw new Error('JSON non valido');
         setTemplate(normalizeTemplate(tpl));
+        setOrigin('file locale importato');
         setTemplateName(tpl.name || file.name.replace(/\.json$/i, ''));
         setCustomerName(tpl.customer_file || '');
         msg('Template caricato da file', true);
@@ -404,16 +487,19 @@ export default function TemplateEditor({ username, onLogout }) {
 
   const handleSave = async () => {
     if (!template) return msg('Nessun template', false);
+    if (!hasTemplateContent(template)) return msg('Aggiungi almeno un campo o una colonna con nome prima di salvare.', false);
+    if (!templateName.trim()) return msg('Inserisci il nome del template prima di salvare.', false);
     try {
-      const toSave = denormalizeTemplate({ ...template, name: templateName || template.name || 'nuovo', customer_file: customerName || 'UNKNOWN' });
+      const toSave = denormalizeTemplate({ ...template, name: templateName.trim(), customer_file: customerName || 'UNKNOWN' });
       const r = await saveTemplate(toSave);
-      msg(`Salvato: ${r?.disk || 'ok'}`, true);
-      loadTemplates();
+      await loadTemplates();
+      msg(`Salvato nel DB: ${r?.db || 'ok'}. Eventuale file invariato.`, true);
     } catch (e) { msg(safeErrMsg(e), false); }
   };
 
   const handleTest = async () => {
     if (!template) return msg('Nessun template', false);
+    if (!hasTemplateContent(template)) return msg('Aggiungi almeno un campo o una colonna con nome prima del test.', false);
     if (!pdfFile) return msg('Carica un PDF prima', false);
     try {
       const toTest = denormalizeTemplate({ ...template, name: templateName || template.name || 'test', customer_file: customerName || 'UNKNOWN' });
@@ -422,13 +508,32 @@ export default function TemplateEditor({ username, onLogout }) {
       console.log('Test result:', result);
       const righe = result?.righe?.length || 0;
       const campi = Object.keys(result || {}).filter(k => k !== 'formato' && k !== 'righe').length;
-      msg(`Test OK: ${campi} campi header, ${righe} righe tabella`, true);
+      msg(`Test: ${campi} campi, ${righe} righe. ${JSON.stringify(result)}`, true);
     } catch (e) { msg(safeErrMsg(e), false); }
   };
 
   const infoMsg = (v) => {
     if (!template) return;
     setTemplate({ ...template, description: v });
+  };
+
+  const handleWriteFile = async () => {
+    if (!template) return;
+    if (!hasTemplateContent(template)) return msg('Aggiungi almeno un campo o una colonna con nome prima di scrivere il file.', false);
+    if (!templateName.trim()) return msg('Inserisci il nome del template prima di scrivere il file.', false);
+    const data = denormalizeTemplate({ ...template, name: templateName.trim(), customer_file: customerName || 'UNKNOWN' });
+    try {
+      let result;
+      try { result = await writeTemplateFile(data); }
+      catch (e) {
+        if (e?.response?.status !== 409) throw e;
+        if (!window.confirm('File esistente. Sovrascrivere? Il precedente viene salvato come .bak.')) return;
+        result = await writeTemplateFile(data, true);
+      }
+      setOrigin('file');
+      await loadTemplates();
+      msg(`Scritto: ${result.disk}. Ora questo file ha precedenza sul DB.`, true);
+    } catch (e) { msg(safeErrMsg(e), false); }
   };
 
   return (
@@ -439,6 +544,14 @@ export default function TemplateEditor({ username, onLogout }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <strong style={{ fontSize: 15 }}>Template Editor</strong>
             <button onClick={onLogout} style={{ ...css.btn4, fontSize: 11, padding: '4px 8px' }}>Esci</button>
+          </div>
+
+          <div style={css.sec}>
+            <div style={css.lbl}>Crea template</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <button onClick={() => handleNewTemplate()} style={css.btn1}>Nuovo template</button>
+              <button onClick={() => handleNewTemplate(true)} style={css.btn4}>Nuovo template barcode</button>
+            </div>
           </div>
 
           {/* DB */}
@@ -479,13 +592,17 @@ export default function TemplateEditor({ username, onLogout }) {
                   <button onClick={handleSave} style={css.btn2}>Salva</button>
                   <button onClick={handleTest} style={{ ...css.btn1, fontSize: 11, padding: '4px 8px' }}>Test</button>
                 </div>
+                <button onClick={handleWriteFile} style={css.btn4}>Scrivi template su file</button>
+                <div style={css.lbl}>Origine: {origin}</div>
                 <input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer" style={{ width: '100%' }} />
               </div>
 
               {/* === HEADER === */}
+              {template.header ? (
               <div style={css.secHdr}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span style={css.lbl}>Header ({(template.header?.fields || []).length})</span>
+                  <button onClick={() => removeSection('header')} style={{ ...css.btn3, fontSize: 10 }}>Rimuovi sezione</button>
                   <button onClick={addHdr} style={{ ...css.btn1, fontSize: 14, padding: '4px 10px' }}>+</button>
                 </div>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
@@ -561,9 +678,17 @@ export default function TemplateEditor({ username, onLogout }) {
                             </label>
                             <span style={{ color: '#94a3b8' }}>HTR</span>
                             <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
-                              <input type="checkbox" checked={f.htr ?? false} onChange={e => updHdr(i, 'htr', e.target.checked)} />
+                              <input type="checkbox" checked={f.htr ?? false} disabled={!!f.barcode} onChange={e => updHdr(i, 'htr', e.target.checked)} />
                               HTR (manoscritto)
                             </label>
+                            <span>Barcode</span>
+                            <input type="checkbox" checked={f.barcode ?? false} disabled={!!f.htr} onChange={e => updHdr(i, 'barcode', e.target.checked)} />
+                            <span>Pagina</span>
+                            <input type="number" min="1" value={f.page ?? 1} onChange={e => updHdr(i, 'page', Math.max(1, Number(e.target.value) || 1))} />
+                            <span>AI</span>
+                            <select value={f.ai_fallback == null ? 'default' : String(f.ai_fallback)} onChange={e => updHdr(i, 'ai_fallback', e.target.value === 'default' ? null : e.target.value === 'true')}>
+                              <option value="default">Da config</option><option value="false">Mai</option><option value="true">Se consentita da config</option>
+                            </select>
                             <span style={{ color: '#94a3b8' }}>X</span>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -600,10 +725,13 @@ export default function TemplateEditor({ username, onLogout }) {
                 })}
               </div>
 
+              ) : <button onClick={() => addSection('header')} style={css.btn4}>Aggiungi header</button>}
               {/* === TABLE === */}
+              {template.table ? (
               <div style={css.secTbl}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span style={css.lbl}>Table ({(template.table?.columns || []).length})</span>
+                  <button onClick={() => removeSection('table')} style={{ ...css.btn3, fontSize: 10 }}>Rimuovi sezione</button>
                   <button onClick={addCol} style={{ ...css.btn1, fontSize: 14, padding: '4px 10px' }}>+</button>
                 </div>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
@@ -677,10 +805,13 @@ export default function TemplateEditor({ username, onLogout }) {
                 <input value={template.table?.skip_line_if_matches || ''} onChange={e => updTableStr('skip_line_if_matches', e.target.value)} placeholder="Skip line regex" style={{ width: '100%', marginTop: 2, fontSize: 11 }} />
               </div>
 
+              ) : <button onClick={() => addSection('table')} style={css.btn4}>Aggiungi tabella</button>}
               {/* === FOOTER === */}
+              {template.footer ? (
               <div style={css.secFtr}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                   <span style={css.lbl}>Footer ({(template.footer?.fields || []).length})</span>
+                  <button onClick={() => removeSection('footer')} style={{ ...css.btn3, fontSize: 10 }}>Rimuovi sezione</button>
                   <button onClick={addFtr} style={{ ...css.btn1, fontSize: 14, padding: '4px 10px' }}>+</button>
                 </div>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
@@ -754,9 +885,17 @@ export default function TemplateEditor({ username, onLogout }) {
                             </label>
                             <span style={{ color: '#94a3b8' }}>HTR</span>
                             <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}>
-                              <input type="checkbox" checked={f.htr ?? false} onChange={e => updFtr(i, 'htr', e.target.checked)} />
+                              <input type="checkbox" checked={f.htr ?? false} disabled={!!f.barcode} onChange={e => updFtr(i, 'htr', e.target.checked)} />
                               HTR (manoscritto)
                             </label>
+                            <span>Barcode</span>
+                            <input type="checkbox" checked={f.barcode ?? false} disabled={!!f.htr} onChange={e => updFtr(i, 'barcode', e.target.checked)} />
+                            <span>Pagina</span>
+                            <input type="number" min="1" value={f.page ?? 1} onChange={e => updFtr(i, 'page', Math.max(1, Number(e.target.value) || 1))} />
+                            <span>AI</span>
+                            <select value={f.ai_fallback == null ? 'default' : String(f.ai_fallback)} onChange={e => updFtr(i, 'ai_fallback', e.target.value === 'default' ? null : e.target.value === 'true')}>
+                              <option value="default">Da config</option><option value="false">Mai</option><option value="true">Se consentita da config</option>
+                            </select>
                             <span style={{ color: '#94a3b8' }}>X</span>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -793,6 +932,7 @@ export default function TemplateEditor({ username, onLogout }) {
                 })}
               </div>
 
+              ) : <button onClick={() => addSection('footer')} style={css.btn4}>Aggiungi footer</button>}
               {/* Signature */}
               <div style={css.secSig}>
                 <span style={css.lbl}>Signature</span>
@@ -811,17 +951,17 @@ export default function TemplateEditor({ username, onLogout }) {
 {`Template: ${templateName || template.name || '-'}
 Customer: ${customerName || '-'}
 
-HEADER [Y:${template.header?.y_min || 0}-${template.header?.y_max || 0}] (${(template.header?.fields || []).length} fields):
+HEADER ${template.header ? '' : '(assente) '}[Y:${template.header?.y_min || 0}-${template.header?.y_max || 0}] (${(template.header?.fields || []).length} fields):
 ${(template.header?.fields || []).map(f => `  ${f.field}: ${f.regex || '-'}  [${Number(f.x_min)?.toFixed(0)},${Number(f.y_min)?.toFixed(0)} ${Number(f.x_max)?.toFixed(0)}x${Number(f.y_max)?.toFixed(0)}]`).join('\n') || '  (nessuno)'}
 
-TABLE [Y:${template.table?.y_min || 0}-${template.table?.y_max || 0}] (${(template.table?.columns || []).length} cols):
+TABLE ${template.table ? '' : '(assente) '}[Y:${template.table?.y_min || 0}-${template.table?.y_max || 0}] (${(template.table?.columns || []).length} cols):
 ${(template.table?.columns || []).map(c => `  ${c.header}: ${c.regex || '-'}  [x${Number(c.x_min)?.toFixed(0)}-${Number(c.x_max)?.toFixed(0)}]`).join('\n') || '  (nessuno)'}
   start_after: [${(template.table?.start_after_contains || '').toString() || '-'}]
   end_markers: [${(template.table?.end_markers || []).map(m => `"${m}"`).join(', ') || '-'}]
   row_detect: ${template.table?.row_detect_pattern || '-'}
   skip: ${template.table?.skip_line_if_matches || '-'}
 
-FOOTER [Y:${template.footer?.y_min || 0}-${template.footer?.y_max || 0}] (${(template.footer?.fields || []).length} fields):
+FOOTER ${template.footer ? '' : '(assente) '}[Y:${template.footer?.y_min || 0}-${template.footer?.y_max || 0}] (${(template.footer?.fields || []).length} fields):
 ${(template.footer?.fields || []).map(f => `  ${f.field}: ${f.regex || '-'}  [${Number(f.x_min)?.toFixed(0)},${Number(f.y_min)?.toFixed(0)} ${Number(f.x_max)?.toFixed(0)}x${Number(f.y_max)?.toFixed(0)}]`).join('\n') || '  (nessuno)'}
 
 Signature: ${(template.signature || []).join(', ') || '-'}`}
@@ -837,6 +977,11 @@ Signature: ${(template.signature || []).join(', ') || '-'}`}
             <span>{template ? `${templateName || template.name || 'senza nome'}` : 'Nessun template'}</span>
             <span style={{ fontSize: 12, color: '#94a3b8' }}>{username} {pdfFile ? `| ${pdfFile.name}` : ''}</span>
           </div>
+          {pdfFile && !template && (
+            <div style={{ padding: '10px 16px', background: '#1e3a8a' }}>
+              Premi Nuovo template, oppure carica un template, per definire header, tabella e footer.
+            </div>
+          )}
           <div style={css.dropArea} onDragOver={e => e.preventDefault()} onDrop={handleDrop}>
             {pdfFile ? (
               <PdfViewer file={pdfFile} template={template} onTagDrop={handleTagDrop} onHdrResize={handleHdrResize} onColResize={handleColResize} onFtrDrop={handleFtrTagDrop} onFtrResize={handleFtrResize} onZoneClick={(idx) => setOpenHdrIdx(idx === openHdrIdx ? null : idx)} selectedZoneIndex={openHdrIdx} onFtrZoneClick={(idx) => setOpenFtrIdx(idx === openFtrIdx ? null : idx)} selectedFtrZoneIndex={openFtrIdx} />
