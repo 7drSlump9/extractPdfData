@@ -14,3 +14,9 @@ templates/TEMPLATE_APPROVED
 templates/draft_ocr
 web/dist
 web/node_modules
+in_pdf/
+out_pdf/
+err_pdf/
+worked_pdf/
+temp_split/
+logs/

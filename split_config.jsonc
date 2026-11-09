@@ -1,0 +1,59 @@
+{
+  "extractor": {                       // Lettore esterno; main.py non viene modificato
+    "python": "",                      // Vuoto = stesso Python dell'utilità
+    "mainPy": "",                      // Vuoto = main.py accanto all'utilità
+    "customer": "UNKNOWN",             // Valore di -customer
+    "template": "barcode001",          // Template del lettore con il campo barcode
+    "extraArgs": ["-no-ai-bootstrap"], // Argomenti extra prima di -eo
+    "timeoutSec": 120                  // Secondi massimi per pagina; oltre = KO
+  },
+  "paths": {                           // Relativi alla cartella dell'utilità, non al config
+    "in_pdf": "in_pdf",                // PDF sorgenti, anche estensione .PDF
+    "out_pdf": "out_pdf",              // Pagine OK nominate col barcode
+    "err_pdf": "err_pdf",              // <jobId>/<origine>_p<N>.pdf per le pagine KO
+    "worked_pdf": "worked_pdf",        // <jobId>/<origine>.pdf già elaborato
+    "tempDir": "temp_split",           // Job temporanei, stato di ripresa e lock
+    "logDir": "logs"                   // Cartella log di testo, nessun DB dell'utilità
+  },
+  "barcode": {
+    "jsonField": "barcode_top",        // Campo di primo livello da usare come nome file
+    "validationRegex": ".+",           // Full match; .+ accetta stringhe non vuote su una riga
+    "invalidValues": ["N/A", ""]       // Valori considerati mancata lettura
+  },
+  "onDuplicate": "suffix_n",           // Duplicati: _1, _2, ...; mai sovrascrivere
+  "minFileAgeSec": 5,                  // Intervallo di stabilità dimensione/data prima del pickup
+  "lockStaleMin": 60,                  // Recupera lock vecchi solo se PID locale non più vivo
+  "keepTemp": false,                   // true conserva anche i job completati per debug
+  "parallel": {
+    "maxWorkers": 8                    // Mancante/null/0/1 = sequenziale; >1 = thread + subprocess
+  },
+  "compression": {                     // Solo dopo lettura OK; originali e KO restano invariati
+    "enabled": true,                   // false salta la compressione
+    "engine": "raster",                // Render PDFium + PDF/JPEG Pillow; niente programmi esterni
+    "dpi": 100,                        // Risoluzione; ridurla diminuisce qualità e peso
+    "jpegQuality": 50,                 // Qualità JPEG 1-95
+    "grayscale": false,                // true converte in scala di grigi
+    "minGainPercent": 10,              // Sotto questa % di risparmio conserva l'originale
+    "keepOriginalIfLarger": true,       // Non accetta mai aumento di peso
+    "skipIfHasText": true              // Evita raster su pagine con testo selezionabile
+  },
+  "log": {
+    "fileName": "split.log",           // Solo nome file, dentro paths.logDir
+    "maxSizeMB": 10,                   // Soglia rotazione in MiB (1024*1024), anche decimale >0
+    "backupCount": 5,                  // Storico .1, .2...; 0 tronca senza tenere storico
+    "level": "INFO"                    // DEBUG, INFO, WARN, WARNING o ERROR
+  },
+  "email": {                           // Predisposizione soltanto: nessun invio in questa versione
+    "sendOnError": false,              // Futuro invio in caso di KO; ora registra solo l'intenzione
+    "smtpHost": "",                    // Server SMTP
+    "smtpPort": 587,                   // Porta SMTP
+    "useTls": true,                    // STARTTLS
+    "username": "",                    // Utente SMTP
+    "passwordEnvVar": "SPLIT_SMTP_PASSWORD", // Nome variabile ambiente; mai password nel config
+    "from": "",                        // Mittente
+    "to": [],                          // Lista destinatari
+    "subject": "PDF split: barcode non letto", // Oggetto futuro, segnaposto {file} e {pages}
+    "body": "File {file}: pagine non lette: {pages}", // Testo futuro
+    "attachFailedPdf": true            // Futuro allegato di tutti i PDF KO del job
+  }
+}

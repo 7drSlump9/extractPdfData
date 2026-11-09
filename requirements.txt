@@ -1,4 +1,5 @@
 pdfplumber
+pypdfium2
 requests
 Pillow
 pytesseract

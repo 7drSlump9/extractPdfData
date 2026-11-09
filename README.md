@@ -2,6 +2,15 @@
 
 Estrattore dati ordini cliente da PDF e immagini basato su template JSON.
 
+## Split PDF per barcode
+
+`python split_pdf.py` elabora una passata di `in_pdf`: divide le pagine, chiama
+`main.py` esternamente, rinomina col barcode e comprime le pagine OK in `out_pdf`.
+Originali e pagine KO sono separati per job, con ripresa dopo interruzione.
+Configurazione commentata inline: `split_config.jsonc`. Nessuna email inviata
+in questa versione; log di testo con rotazione configurabile (default 10 MiB).
+Vedere il [manuale completo](docs/MANUALE_SPLIT.md) prima dell'uso.
+
 Due programmi, un unico motore condiviso.
 
 ---
