@@ -21,6 +21,9 @@ Ogni lancio con elaborazioni produce **un solo report** JSON in `reports` e
 un riepilogo email tramite Brevo (nessun allegato). A.pdf, B.pdf, C.pdf: un report,
 una email, con tempi e conteggi per PDF e nomi dei file in errore.
 Oggetto e corpo si modificano in `soPDF_email.jsonc`, con segnaposto documentati.
+Layout a tabelle in `soPDF_email.html`: riepilogo Fogli totali/OK/KO e un blocco
+per PDF, con una riga per ogni foglio in errore e relativo motivo breve.
+Diagnostica tecnica solo nel report/log.
 Mittente e destinatari sono in `email` nel config; chiave API solo in `.env` o
 nell'ambiente, col nome indicato da `email.apiKeyEnvVar` (default `BREVO_API_KEY`).
 `email.enabled=false` disattiva gli invii senza disattivare i report.

@@ -829,6 +829,25 @@ class SplitTests(unittest.TestCase):
             self.assertIsNotNone(pdf['finishedAt'])
             self.assertEqual(pdf['status'], 'ok')
 
+    def test_na_exit_one_has_structured_short_reason_after_rotation(self):
+        self.input(count=1)
+
+        def reader(command, **kwargs):
+            result = Path(command[command.index('-outputTemplatePath') + 1])
+            result.write_text(json.dumps({'barcode_top': 'N/A'}), encoding='utf-8')
+            return subprocess.CompletedProcess(command, 1, '====== verbose stdout local path ======', '')
+
+        with patch.object(split.subprocess, 'run', side_effect=reader):
+            self.assertEqual(self.runner.run(), 1)
+        report = json.loads(self.runner.report.path.read_text(encoding='utf-8'))
+        error = report['pdfs'][0]['errors'][0]
+        self.assertEqual(error['reasonShort'], 'Barcode non letto (anche dopo rotazione 180°)')
+        self.assertIn('verbose stdout', error['reason'])
+        template = split.reporting.load_template(split.ROOT / 'soPDF_email.jsonc', split.parse_jsonc)
+        email, _ = split.reporting.render_email([report], template)
+        self.assertNotIn('verbose stdout', email['htmlContent'])
+        self.assertNotIn('======', email['textContent'])
+
     def test_email_failure_does_not_change_processing_result(self):
         self.cfg['email']['enabled'] = True
         self.input(count=1)

@@ -249,6 +249,26 @@ si configurano in `soPDF_email.jsonc`, indicato da `email.templateFile`.
 In cima al file trovi i segnaposto disponibili; per esempio
 `soPDF - {total_pdfs} PDF, {total_pages} fogli - {status}`.
 `fileTemplate` e `errorTemplate` compongono le righe per PDF ed errori.
+Il layout HTML è separato in `soPDF_email.html`, selezionato con `bodyHtmlFile`
+(percorso relativo al JSONC). Se presente prevale su `bodyHtml` inline.
+In alto ci sono i tre indicatori Fogli totali/OK/KO. Segue un blocco per PDF:
+intestazione con esito, conteggi e tempi; tabella Foglio / Errore / Salvato come.
+Ogni foglio in errore ha la propria riga in ordine numerico, senza raggruppamento
+per motivo. Errori dell'intero documento sono indicati come "Documento" in fondo.
+I PDF senza errori hanno un blocco compatto. Palette sobria blu notte, verde
+spento e bordeaux, con righe alternate grigio chiaro e stili inline per email.
+I PDF con errori sono elencati prima, poi in ordine alfabetico.
+`{pdf_blocks}` contiene i blocchi HTML già protetti generati dal codice;
+`{status_color}` è il colore di esito. I vecchi segnaposto `{pdf_rows}` e
+`{error_section}` restano supportati per template personalizzati preesistenti.
+Gli altri dati restano escaped.
+I motivi brevi sono salvati in `reasonShort` accanto alla diagnostica originale
+`reason`, che resta integra nel JSON e nel log. Per i report delle vecchie versioni
+si usa una traduzione prudente in visualizzazione: mai stdout/stderr, separatori
+o percorsi locali nell'email. Errori non riconosciuti rimandano al report/log.
+Date email in formato gg/mm/aaaa HH:MM:SS e durate HH:MM:SS; i dati JSON
+mantengono ISO e secondi. Si mostrano al massimo 100 errori per PDF, con nota
+per gli altri; il report locale resta completo. Nessuna emoji necessaria alla lettura.
 I dati HTML sono protetti; per scrivere graffe letterali usare `{{` e `}}`.
 Segnaposto sconosciuti vengono rifiutati prima dell'elaborazione.
 Dentro Python i dati sono disponibili in `Runner.report.data`; la funzione

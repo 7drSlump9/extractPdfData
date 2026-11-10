@@ -3,6 +3,7 @@ from datetime import datetime
 import html
 import json
 import os
+import re
 from pathlib import Path
 import string
 import threading
@@ -13,7 +14,8 @@ import uuid
 
 BREVO_URL = 'https://api.brevo.com/v3/smtp/email'
 RUN_FIELDS = {'run_start', 'run_end', 'run_duration', 'total_pdfs', 'total_pages',
-              'ok', 'ko', 'rotated', 'status', 'error_count', 'files'}
+              'ok', 'ko', 'rotated', 'status', 'error_count', 'files', 'pdf_rows',
+              'error_section', 'status_color', 'pdf_blocks'}
 FILE_FIELDS = {'file', 'output_name', 'started', 'finished', 'duration', 'pages',
                'processed', 'ok', 'ko', 'rotated', 'status', 'errors', 'resumed'}
 ERROR_FIELDS = {'error_file', 'error_page', 'error_reason'}
@@ -43,7 +45,7 @@ def load_template(path, parse):
     template = parse(Path(path).read_text(encoding='utf-8-sig'))
     allowed = {'subject': RUN_FIELDS - {'files'}, 'subjectOnError': RUN_FIELDS - {'files'},
                'bodyText': RUN_FIELDS, 'bodyHtml': RUN_FIELDS,
-               'fileTemplate': FILE_FIELDS, 'errorTemplate': ERROR_FIELDS}
+               'fileTemplate': FILE_FIELDS, 'errorTemplate': ERROR_FIELDS, 'bodyHtmlFile': set()}
     if not isinstance(template, dict) or set(template) - set(allowed):
         raise ValueError('Template email: struttura o chiavi non valide')
     for required in ('subject', 'bodyText', 'fileTemplate', 'errorTemplate'):
@@ -56,9 +58,128 @@ def load_template(path, parse):
         for _, field, spec, conversion in string.Formatter().parse(text):
             if field is not None and (field not in fields or spec or conversion):
                 raise ValueError(f'Template email: segnaposto non valido in {key}: {field}')
+    if template['bodyHtmlFile']:
+        template['bodyHtml'] = (Path(path).parent / template['bodyHtmlFile']).read_text(encoding='utf-8-sig')
+        for _, field, spec, conversion in string.Formatter().parse(template['bodyHtml']):
+            if field is not None and (field not in RUN_FIELDS or spec or conversion):
+                raise ValueError(f'Template HTML: segnaposto non valido: {field}')
     if any(c in template['subject'] + template['subjectOnError'] for c in '\r\n'):
         raise ValueError('Template email: oggetto su una sola riga')
     return template
+
+
+def short_reason(reason):
+    """Compatibilità report vecchi: mai riportare stdout, percorsi o diagnostica libera."""
+    text = str(reason)
+    if 'timeout=' in text:
+        result = 'Lettore in timeout'
+    elif 'non conforme alla regex' in text:
+        result = 'Barcode non conforme alle regole configurate'
+    elif ('N/A' in text or 'barcode assente' in text or 'barcode non valido' in text):
+        result = 'Barcode non letto'
+    elif 'avvio lettore' in text:
+        result = 'Lettore non avviabile'
+    elif 'exit=' in text:
+        result = 'Errore del lettore'
+    elif 'interrott' in text.lower():
+        result = 'Processo interrotto prima del completamento'
+    else:
+        result = 'Errore di elaborazione; consultare il report o il log'
+    if 'lettura a 180' in text:
+        result += ' (anche dopo rotazione 180°)'
+    return result
+
+
+def readable_reason(error):
+    summary = error.get('reasonShort')
+    # Nessuna diagnostica grezza nemmeno se un vecchio report usa un campo improprio.
+    if summary and len(summary) <= 200 and not re.search(r'stdout|stderr|[=]{3}|[\\/]|\n|\r', summary):
+        return summary
+    return short_reason(error.get('reason', ''))
+
+
+def display_date(value):
+    if not value:
+        return 'Non disponibile'
+    return datetime.fromisoformat(value).strftime('%d/%m/%Y %H:%M:%S')
+
+
+def display_duration(value):
+    if value is None:
+        return 'Non disponibile'
+    seconds = max(0, int(value))
+    hours, rest = divmod(seconds, 3600)
+    minutes, seconds = divmod(rest, 60)
+    return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+
+
+def visible_errors(doc):
+    """Una riga per errore, ordinata per foglio; errori documento in fondo."""
+    return sorted(doc['errors'], key=lambda e: (e.get('page') is None, e.get('page') or 0))[:100]
+
+
+def saved_filename(error):
+    return re.split(r'[\\/]', str(error['file']))[-1]
+
+
+def html_pdf_blocks(documents):
+    escape = lambda value: html.escape(str(value), quote=True)
+    blocks = []
+    for doc in documents:
+        color = '#8c2f39' if doc['errors'] else '#2f6b4f'
+        total = doc['totalPages'] if doc['totalPages'] is not None else 'N/D'
+        header = (
+            '<table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 22px;border:1px solid #d9dee5;border-collapse:collapse;text-align:left">'
+            '<tr><td colspan="3" style="padding:16px;background:#e8eef5;border-bottom:1px solid #d9dee5">'
+            f'<strong style="font-size:17px;color:#1f2d3d;word-break:break-word">{escape(doc["file"])}</strong>'
+            f'<br><span style="font-size:12px;color:{color};font-weight:bold">{escape(doc["status"].upper())}</span>'
+            f'<span style="font-size:12px;color:#334155"> · Fogli: {escape(total)} · OK: {escape(doc["ok"])} · KO: {escape(doc["ko"])}</span>'
+            f'<br><span style="font-size:12px;color:#64748b">Inizio: {escape(display_date(doc["startedAt"]))} · Fine: {escape(display_date(doc["finishedAt"]))}'
+            f'<br>Durata: {escape(display_duration(doc["durationSec"]))}</span></td></tr>')
+        rows = []
+        if doc['errors']:
+            rows.append('<tr style="background:#f6f8fa;color:#334155;font-size:12px"><th width="10%" style="padding:10px 12px;border-bottom:1px solid #d9dee5">Foglio</th><th width="50%" style="padding:10px 12px;border-bottom:1px solid #d9dee5">Errore</th><th width="40%" style="padding:10px 12px;border-bottom:1px solid #d9dee5">Salvato come</th></tr>')
+            for index, error in enumerate(visible_errors(doc)):
+                background = '#ffffff' if index % 2 == 0 else '#f6f8fa'
+                cell = 'padding:12px;border-bottom:1px solid #d9dee5;vertical-align:top;word-break:break-word;'
+                page = error.get('page') if error.get('page') is not None else 'Documento'
+                rows.append(f'<tr style="background:{background}">'
+                            f'<td style="{cell}font-weight:bold;color:#1f2d3d">{escape(page)}</td>'
+                            f'<td style="{cell}color:#8c2f39">{escape(readable_reason(error))}</td>'
+                            f'<td style="{cell}font-size:12px;color:#64748b">{escape(saved_filename(error))}</td></tr>')
+            omitted = len(doc['errors']) - 100
+            if omitted > 0:
+                rows.append(f'<tr><td colspan="3" style="padding:12px;color:#64748b;font-size:12px">altri {omitted} fogli con errore: consultare il report completo.</td></tr>')
+        else:
+            rows.append('<tr><td colspan="3" style="padding:12px 16px;font-size:13px;color:#2f6b4f">Nessun errore. Tutti i fogli elaborati correttamente.</td></tr>')
+        blocks.append(header + ''.join(rows) + '</table>')
+    return ''.join(blocks)
+
+
+def html_tables(documents):
+    escape = lambda value: html.escape(str(value), quote=True)
+    pdf_rows, error_rows = [], []
+    for doc in documents:
+        color = '#b91c1c' if doc['errors'] else '#166534'
+        cells = [f'<strong>{escape(doc["file"])}</strong><br><span style="font-size:11px;color:#64748b">Inizio: {escape(display_date(doc["startedAt"]))}<br>Fine: {escape(display_date(doc["finishedAt"]))}</span>',
+                 f'<strong style="color:{color}">{escape(doc["status"].upper())}</strong>',
+                 escape(doc['totalPages'] if doc['totalPages'] is not None else 'N/D'),
+                 escape(doc['ok']), escape(doc['ko']), escape(display_duration(doc['durationSec']))]
+        pdf_rows.append('<tr>' + ''.join(f'<td style="padding:12px 10px;border-bottom:1px solid #e2e8f0;vertical-align:top;word-break:break-word">{c}</td>' for c in cells) + '</tr>')
+        for error in visible_errors(doc):
+            reason = readable_reason(error)
+            group = {'pages': [str(error.get('page') or '-')], 'files': [saved_filename(error)]}
+            error_rows.append('<tr>'
+                f'<td style="padding:14px;border-bottom:1px solid #fecaca;vertical-align:top"><strong style="font-size:16px">{escape(doc["file"])}</strong><br><span style="color:#64748b">Fogli: {escape(", ".join(group["pages"]))}</span></td>'
+                f'<td style="padding:14px;border-bottom:1px solid #fecaca;vertical-align:top"><strong style="color:#b91c1c">{escape(reason)}</strong><br><span style="font-size:12px;color:#64748b;word-break:break-word">Salvato come: {escape(", ".join(group["files"]))}</span></td></tr>')
+        omitted = max(0, len(doc['errors']) - 100)
+        if omitted:
+            error_rows.append(f'<tr><td colspan="2" style="padding:14px">{escape(doc["file"])}: altri {omitted} fogli con errore. Consultare il report completo.</td></tr>')
+    if error_rows:
+        section = '<h2 style="font-size:20px;color:#b91c1c;margin:28px 0 12px">PDF con errori — intervento richiesto</h2><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #fecaca;border-collapse:collapse;background:#fff7f7"><tr style="background:#fee2e2;text-align:left"><th style="padding:12px 14px" width="36%">PDF / Fogli</th><th style="padding:12px 14px">Errore / File da verificare</th></tr>' + ''.join(error_rows) + '</table>'
+    else:
+        section = '<p style="padding:16px;background:#f0fdf4;color:#166534;border:1px solid #bbf7d0"><strong>Nessun errore.</strong> Tutti i fogli sono stati elaborati correttamente.</p>'
+    return ''.join(pdf_rows), section
 
 
 def render_email(reports, template):
@@ -69,7 +190,7 @@ def render_email(reports, template):
     for report in sorted(reports, key=lambda r: r['startedAt']):
         for entry in report['pdfs']:
             latest[entry['jobId']] = entry
-    documents = list(latest.values())
+    documents = sorted(latest.values(), key=lambda d: (not bool(d['errors']), d['file'].casefold()))
     starts = [r['startedAt'] for r in reports]
     ends = [r.get('finishedAt') or r['startedAt'] for r in reports]
     context = {'run_start': min(starts), 'run_end': max(ends),
@@ -83,23 +204,31 @@ def render_email(reports, template):
     rows = []
     for doc in documents:
         errors = '\n'.join(template['errorTemplate'].format(
-            error_file=e['file'], error_page=e.get('page') or '-', error_reason=e['reason'])
-                           for e in doc['errors']) or 'Nessuno'
+            error_file=saved_filename(error), error_page=error.get('page') or 'Documento',
+            error_reason=readable_reason(error)) for error in visible_errors(doc)) or 'Nessuno'
+        if len(doc['errors']) > 100:
+            errors += f'\nAltri {len(doc["errors"]) - 100} fogli: consultare il report completo.'
         values = {'file': doc['file'], 'output_name': doc['outputName'],
-                  'started': doc['startedAt'] or 'non disponibile', 'finished': doc['finishedAt'],
-                  'duration': doc['durationSec'] if doc['durationSec'] is not None else 'non disponibile',
+                  'started': display_date(doc['startedAt']), 'finished': display_date(doc['finishedAt']),
+                  'duration': display_duration(doc['durationSec']),
                   'pages': doc['totalPages'] if doc['totalPages'] is not None else 'non disponibile',
                   'processed': doc['processedPages'], 'ok': doc['ok'], 'ko': doc['ko'],
                   'rotated': doc['rotated'], 'status': doc['status'], 'errors': errors,
                   'resumed': 'si' if doc['resumed'] else 'no'}
         rows.append(template['fileTemplate'].format(**values))
     context['files'] = '\n\n'.join(rows)
+    context['status_color'] = '#8c2f39' if context['error_count'] else '#2f6b4f'
     subject = template['subjectOnError'] if context['error_count'] and template['subjectOnError'] else template['subject']
-    rendered = {'subject': subject.format(**context).replace('\r', ' ').replace('\n', ' '),
-                'textContent': template['bodyText'].format(**context)}
+    display = dict(context, run_start=display_date(context['run_start']),
+                   run_end=display_date(context['run_end']), run_duration=display_duration(context['run_duration']))
+    rendered = {'subject': subject.format(**display).replace('\r', ' ').replace('\n', ' '),
+                'textContent': template['bodyText'].format(**display)}
     if template['bodyHtml']:
-        rendered['htmlContent'] = template['bodyHtml'].format(
-            **{k: html.escape(str(v)) for k, v in context.items()})
+        safe = {k: html.escape(str(v)) for k, v in display.items()}
+        # Solo i blocchi costruiti qui con celle già escaped sono HTML attendibile.
+        safe['pdf_rows'], safe['error_section'] = html_tables(documents)
+        safe['pdf_blocks'] = html_pdf_blocks(documents)
+        rendered['htmlContent'] = template['bodyHtml'].format(**safe)
     return rendered, context
 
 

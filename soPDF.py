@@ -63,6 +63,9 @@ class LockError(RuntimeError):
 
 class PageError(RuntimeError):
     """Solo errori di estrazione: non include errori disco/pubblicazione."""
+    def __init__(self, detail, summary='Errore di lettura'):
+        super().__init__(detail)
+        self.summary = summary
 
 
 def parse_jsonc(text):
@@ -489,26 +492,40 @@ def extract_barcode(source, result_path, cfg, logger, context):
                                    text=True, encoding='utf-8', errors='replace',
                                    timeout=settings['timeoutSec'], check=False)
     except subprocess.TimeoutExpired as exc:
-        raise PageError(f'timeout={settings["timeoutSec"]}s stdout={tail(exc.stdout)} stderr={tail(exc.stderr)}') from exc
+        raise PageError(f'timeout={settings["timeoutSec"]}s stdout={tail(exc.stdout)} stderr={tail(exc.stderr)}',
+                        f'Lettore in timeout ({settings["timeoutSec"]} s)') from exc
     except OSError as exc:
-        raise PageError(f'avvio lettore fallito: {exc}') from exc
+        raise PageError(f'avvio lettore fallito: {exc}', 'Lettore non avviabile') from exc
     output = f'exit={completed.returncode} stdout={tail(completed.stdout)} stderr={tail(completed.stderr)}'
     if completed.returncode:
-        raise PageError(output)
+        # main.py restituisce 1 anche quando ha regolarmente scritto un JSON con N/A.
+        summary = f'Errore del lettore (codice {completed.returncode})'
+        try:
+            failed_data = json.loads(result_path.read_text(encoding='utf-8-sig'))
+            failed_value = failed_data.get(cfg['barcode']['jsonField'])
+            if failed_value is None or failed_value in cfg['barcode']['invalidValues']:
+                summary = 'Barcode non letto'
+        except (OSError, ValueError, AttributeError):
+            pass
+        raise PageError(output, summary)
+    summary = 'Risultato del lettore non disponibile o non valido'
     try:
         data = json.loads(result_path.read_text(encoding='utf-8-sig'))
         value = data.get(cfg['barcode']['jsonField']) if isinstance(data, dict) else None
         if not isinstance(value, str):
+            summary = 'Barcode non letto'
             raise ValueError('barcode assente o non stringa')
         value = value.strip()
         if not value or value in cfg['barcode']['invalidValues']:
+            summary = 'Barcode non letto'
             raise ValueError(f'barcode non valido: {value!r}')
         pattern = cfg['barcode'].get('validationRegex', '')
         if pattern.strip() and re.fullmatch(pattern, value) is None:
+            summary = 'Barcode non conforme alle regole configurate'
             raise ValueError(f'barcode non conforme alla regex: {value!r}')
         name = safe_stem(value)
     except (OSError, ValueError) as exc:
-        raise PageError(f'{exc}; {output}') from exc
+        raise PageError(f'{exc}; {output}', summary) from exc
     logger.info('EXTRACT | %s | barcode=%s', context, value)
     return name
 
@@ -615,13 +632,15 @@ class Runner:
         finished = reporting.now()
         done = [r for _, r in pages if r.get('status') == 'done']
         errors = [{'file': Path(r.get('destination') or r.get('prepared') or state['origin']).name,
-                   'page': int(n), 'reason': r.get('reason', 'Lettura fallita')}
+                   'page': int(n), 'reason': r.get('reason', 'Lettura fallita'),
+                   'reasonShort': r.get('reasonShort', reporting.short_reason(r.get('reason', '')))}
                   for n, r in pages if r.get('kind') == 'ko']
         if state.get('splitError'):
             errors.append({'file': Path(state.get('archive', {}).get('destination', state['origin'])).name,
-                           'page': None, 'reason': state['splitError']})
+                           'page': None, 'reason': state['splitError'], 'reasonShort': 'PDF non leggibile'})
         if error:
-            errors.append({'file': state['origin'], 'page': None, 'reason': error})
+            errors.append({'file': state['origin'], 'page': None, 'reason': error,
+                           'reasonShort': 'Errore di lavorazione o salvataggio; consultare il log'})
         status = ('errore lavorazione' if error else 'non dividibile' if state.get('splitError')
                   else 'in corso' if state.get('phase') != 'done' else 'parziale' if errors else 'ok')
         entry = {'jobId': job.folder.name, 'file': state['origin'],
@@ -742,7 +761,8 @@ class Runner:
                     stem = extract_barcode(rotated_source, rotated_source.with_suffix('.json'),
                                            self.cfg, self.logger, context)
                 except PageError as second_error:
-                    raise PageError(f'prima lettura: {first_error}; lettura a 180°: {second_error}') from second_error
+                    summary = second_error.summary + ' (anche dopo rotazione 180°)'
+                    raise PageError(f'prima lettura: {first_error}; lettura a 180°: {second_error}', summary) from second_error
                 source = rotated_source
                 rotated = True
                 self.logger.info('ROTATE | %s | barcode letto dopo rotazione di 180°', context)
@@ -752,13 +772,15 @@ class Runner:
             stem = job.state.get('outputName', safe_stem(Path(job.state['origin']).stem)) + f'_p{number}'
             directory = self.job_directory(job, 'err_pdf')
             reason = str(exc)
+            reason_short = exc.summary
         else:
             kind, reason = 'ok', ''
+            reason_short = ''
             prepared = compress_page(source, source.with_suffix('.compressed'),
                                      self.cfg['compression'], self.logger, context)
             directory = self.job_directory(job, 'out_pdf')
         with job.lock:
-            record.update(kind=kind, reason=reason, prepared=str(prepared), stem=stem, rotated=rotated,
+            record.update(kind=kind, reason=reason, reasonShort=reason_short, prepared=str(prepared), stem=stem, rotated=rotated,
                           savedBytes=source.stat().st_size - prepared.stat().st_size)
             job.save()
             destination = job.publish(prepared, directory, stem, record, self.logger,

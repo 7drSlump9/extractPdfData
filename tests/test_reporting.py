@@ -33,7 +33,8 @@ class ReportingTests(unittest.TestCase):
                 'totalPages': 3, 'processedPages': 3, 'ok': 2 if failed else 3,
                 'ko': int(failed), 'rotated': 1, 'resumed': False,
                 'status': 'parziale' if failed else 'ok',
-                'errors': [{'file': 'A_101126_p3.pdf', 'page': 3, 'reason': '<non letto>'}] if failed else []}
+                'errors': [{'file': 'A_101126_p3.pdf', 'page': 3, 'reason': '<non letto>',
+                            'reasonShort': 'Barcode <non letto>'}] if failed else []}
 
     def test_one_report_one_email_three_pdfs(self):
         report = self.run_report()
@@ -148,6 +149,107 @@ class ReportingTests(unittest.TestCase):
         new.record(dict(self.entry(), resumed=True))
         _, context = reporting.render_email([old.data, new.data], self.template)
         self.assertEqual(context['total_pdfs'], 1)
+
+    def test_legacy_verbose_errors_one_row_per_page_and_clean_in_both_bodies(self):
+        report = self.run_report()
+        doc = self.entry('ptv_ruotata.pdf', True)
+        detail = (r'prima lettura: exit=1 stdout=C:\Users\utente\temp_split\23.pdf '
+                  r'\n======= ORDINE ESTRATTO barcode_top: N/A stderr=; lettura a 180°: exit=1 stdout=')
+        doc['errors'] = [{'file': f'ptv_ruotata_101126_p{n}.pdf', 'page': n, 'reason': detail}
+                         for n in (23, 24, 25)]
+        report.record(doc)
+        rendered, _ = reporting.render_email([report.data], self.template)
+        for body in (rendered['textContent'], rendered['htmlContent']):
+            self.assertNotIn('23, 24, 25', body)
+            for number in (23, 24, 25):
+                self.assertIn(f'ptv_ruotata_101126_p{number}.pdf', body)
+            self.assertIn('Barcode non letto (anche dopo rotazione 180°)', body)
+            self.assertNotIn('stdout', body)
+            self.assertNotIn('stderr', body)
+            self.assertNotIn('C:\\Users', body)
+            self.assertNotIn('=======', body)
+        self.assertIn('stdout', json.loads(report.path.read_text())['pdfs'][0]['errors'][0]['reason'])
+        self.assertIn('<table', rendered['htmlContent'])
+        self.assertIn('FOGLI TOTALI', rendered['htmlContent'])
+        self.assertIn('FOGLI OK', rendered['htmlContent'])
+        self.assertIn('FOGLI KO', rendered['htmlContent'])
+        self.assertNotIn('<pre>', rendered['htmlContent'])
+        for number in (23, 24, 25):
+            self.assertIn(f'Foglio {number}:', rendered['textContent'])
+            row = next(row for row in rendered['htmlContent'].split('<tr')
+                       if f'ptv_ruotata_101126_p{number}.pdf' in row)
+            self.assertIn(f'>{number}</td>', row)
+            self.assertIn('Barcode non letto', row)
+
+    def test_html_escapes_filename_and_error_and_sorts_errors_first(self):
+        report = self.run_report()
+        report.record(self.entry('A_OK.pdf'))
+        report.record(self.entry('<img src=x onerror=alert(1)>.pdf', True))
+        rendered, _ = reporting.render_email([report.data], self.template)
+        body = rendered['htmlContent']
+        self.assertNotIn('<img', body)
+        self.assertIn('&lt;img', body)
+        self.assertIn('&lt;non letto&gt;', body)
+        self.assertLess(body.index('&lt;img'), body.index('A_OK.pdf'))
+
+    def test_no_error_section_and_readable_dates(self):
+        report = self.run_report()
+        doc = self.entry()
+        doc['startedAt'] = '2026-11-10T17:30:09+01:00'
+        report.record(doc)
+        rendered, _ = reporting.render_email([report.data], self.template)
+        self.assertIn('Nessun errore', rendered['htmlContent'])
+        self.assertNotIn('intervento richiesto', rendered['htmlContent'])
+        self.assertIn('10/11/2026 17:30:09', rendered['textContent'])
+
+    def test_many_errors_limited_without_truncating_report(self):
+        report = self.run_report()
+        doc = self.entry(failed=True)
+        doc['errors'] = [{'file': f'file_p{n}.pdf', 'page': n, 'reason': 'N/A'} for n in range(1, 121)]
+        report.record(doc)
+        rendered, _ = reporting.render_email([report.data], self.template)
+        self.assertIn('altri 20', rendered['htmlContent'])
+        self.assertNotIn('file_p101.pdf', rendered['htmlContent'])
+        self.assertEqual(len(report.data['pdfs'][0]['errors']), 120)
+
+    def test_external_html_validated_and_resolved_relative_to_jsonc(self):
+        template = dict(self.template, bodyHtmlFile='layout.html')
+        (self.root / 'layout.html').write_text('<p>{invalid}</p>', encoding='utf-8')
+        path = self.root / 'template.jsonc'
+        path.write_text(json.dumps(template), encoding='utf-8')
+        with self.assertRaises(ValueError):
+            reporting.load_template(path, split.parse_jsonc)
+        (self.root / 'layout.html').write_text('<p>{ok}</p>', encoding='utf-8')
+        self.assertEqual(reporting.load_template(path, split.parse_jsonc)['bodyHtml'], '<p>{ok}</p>')
+
+    def test_pdf_blocks_have_individual_sorted_rows_and_compact_ok(self):
+        report = self.run_report()
+        failed = self.entry('B_errori.pdf', True)
+        failed['errors'] = [
+            {'file': 'pagina_24.pdf', 'page': 24, 'reasonShort': 'Lettore in timeout (120 s)'},
+            {'file': 'pagina_3.pdf', 'page': 3, 'reasonShort': 'Barcode non letto'},
+            {'file': 'pagina_18.pdf', 'page': 18, 'reasonShort': 'Barcode non conforme alle regole configurate'},
+            {'file': 'documento.pdf', 'page': None, 'reasonShort': 'PDF non leggibile'},
+        ]
+        report.record(self.entry('A_ok.pdf'))
+        report.record(failed)
+        message, _ = reporting.render_email([report.data], self.template)
+        body = message['htmlContent']
+        self.assertEqual(body.count('B_errori.pdf'), 1)
+        self.assertEqual(body.count('A_ok.pdf'), 1)
+        self.assertLess(body.index('B_errori.pdf'), body.index('A_ok.pdf'))
+        positions = [body.index(name) for name in ('pagina_3.pdf', 'pagina_18.pdf', 'pagina_24.pdf', 'documento.pdf')]
+        self.assertEqual(positions, sorted(positions))
+        for filename, reason in (('pagina_24.pdf', 'Lettore in timeout'),
+                                 ('pagina_3.pdf', 'Barcode non letto'),
+                                 ('pagina_18.pdf', 'Barcode non conforme')):
+            row = next(row for row in body.split('<tr') if filename in row)
+            self.assertIn(reason, row)
+        self.assertIn('>Documento</td>', body)
+        self.assertIn('Nessun errore', body)
+        self.assertNotIn('Tutti i PDF elaborati', body)
+        for color in ('#1f2d3d', '#2f6b4f', '#8c2f39', '#d9dee5', '#f6f8fa'):
+            self.assertIn(color, body)
 
 
 if __name__ == '__main__':
