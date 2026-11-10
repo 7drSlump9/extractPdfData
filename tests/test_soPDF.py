@@ -811,12 +811,64 @@ class SplitTests(unittest.TestCase):
             finally:
                 handler.close()
 
-    def test_email_stub_never_sends(self):
-        cfg = copy.deepcopy(self.cfg['email'])
-        cfg['sendOnError'] = True
-        with self.assertLogs(self.logger, logging.WARNING) as captured:
-            split.notify_errors(cfg, self.logger, 'job', 'a.pdf', [3], ['a_p3.pdf'])
-        self.assertIn('NON implementato', captured.output[0])
+    def test_email_disabled_still_writes_one_run_report(self):
+        self.input('A.pdf', count=2)
+        self.input('B.pdf', count=1)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader), \
+                patch.object(split.reporting, 'send_brevo') as sender:
+            self.assertEqual(self.runner.run(), 0)
+        sender.assert_not_called()
+        reports = list(self.runner.paths['reportDir'].glob('run_*.json'))
+        self.assertEqual(len(reports), 1)
+        report = json.loads(reports[0].read_text(encoding='utf-8'))
+        self.assertEqual(report['totals']['total_pdfs'], 2)
+        self.assertEqual(report['totals']['total_pages'], 3)
+        self.assertEqual(report['email']['status'], 'skipped')
+        for pdf in report['pdfs']:
+            self.assertIsNotNone(pdf['startedAt'])
+            self.assertIsNotNone(pdf['finishedAt'])
+            self.assertEqual(pdf['status'], 'ok')
+
+    def test_email_failure_does_not_change_processing_result(self):
+        self.cfg['email']['enabled'] = True
+        self.input(count=1)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader), \
+                patch.object(split.reporting, 'send_brevo', side_effect=RuntimeError('network')):
+            self.assertEqual(self.runner.run(), 0)
+        report = json.loads(self.runner.report.path.read_text(encoding='utf-8'))
+        self.assertEqual(report['email']['status'], 'failed')
+        self.assertEqual(report['totals']['ok'], 1)
+
+    def test_empty_run_and_completed_debug_jobs_do_not_repeat_report(self):
+        self.cfg['keepTemp'] = True
+        self.input(count=1)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.assertEqual(self.runner.run(), 0)
+            self.assertEqual(self.runner.run(), 0)
+        self.assertEqual(len(list(self.runner.paths['reportDir'].glob('run_*.json'))), 1)
+
+    def test_report_unreadable_pdf_and_infrastructure_failure(self):
+        (self.runner.paths['in_pdf'] / 'bad.pdf').write_bytes(b'not PDF')
+        self.input('good.pdf', count=1)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader), \
+                patch.object(split.os, 'link', side_effect=OSError('disk full')):
+            self.assertEqual(self.runner.run(), 1)
+        report = json.loads(self.runner.report.path.read_text(encoding='utf-8'))
+        docs = {d['file']: d for d in report['pdfs']}
+        self.assertEqual(docs['bad.pdf']['status'], 'errore lavorazione')
+        self.assertIsNone(docs['bad.pdf']['totalPages'])
+        self.assertTrue(docs['bad.pdf']['errors'])
+        self.assertTrue(docs['good.pdf']['errors'])
+
+    def test_report_resume_marks_resumed_and_keeps_unknown_old_start(self):
+        job = self.runner.create_job(self.input(count=1))
+        del job.state['startedAt']
+        job.save()
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.assertEqual(self.runner.run(), 0)
+        report = json.loads(self.runner.report.path.read_text(encoding='utf-8'))
+        self.assertTrue(report['pdfs'][0]['resumed'])
+        self.assertIsNone(report['pdfs'][0]['durationSec'])
 
 
 if __name__ == '__main__':

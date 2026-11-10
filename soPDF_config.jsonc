@@ -13,7 +13,8 @@
     "err_pdf": "err_pdf",              // Stessa sottocartella; <cartella>_p<N>.pdf per KO
     "worked_pdf": "worked_pdf",        // Stessa sottocartella; <cartella>.pdf originale archiviato
     "tempDir": "temp_split",           // Job temporanei, stato di ripresa e lock
-    "logDir": "logs"                   // Cartella log di testo, nessun DB dell'utilità
+    "logDir": "logs",                  // Cartella log di testo, nessun DB dell'utilità
+    "reportDir": "reports"             // Un JSON persistente per lancio con elaborazioni
   },
   "barcode": {
     "jsonField": "barcode_top",        // Campo di primo livello da usare come nome file
@@ -45,17 +46,14 @@
     "backupCount": 5,                  // Storico .1, .2...; 0 tronca senza tenere storico
     "level": "INFO"                    // DEBUG, INFO, WARN, WARNING o ERROR
   },
-  "email": {                           // Predisposizione soltanto: nessun invio in questa versione
-    "sendOnError": false,              // Futuro invio in caso di KO; ora registra solo l'intenzione
-    "smtpHost": "",                    // Server SMTP
-    "smtpPort": 587,                   // Porta SMTP
-    "useTls": true,                    // STARTTLS
-    "username": "",                    // Utente SMTP
-    "passwordEnvVar": "SPLIT_SMTP_PASSWORD", // Nome variabile ambiente; mai password nel config
-    "from": "",                        // Mittente
-    "to": [],                          // Lista destinatari
-    "subject": "PDF split: barcode non letto", // Oggetto futuro, segnaposto {file} e {pages}
-    "body": "File {file}: pagine non lette: {pages}", // Testo futuro
-    "attachFailedPdf": true            // Futuro allegato di tutti i PDF KO del job
+  "email": {                           // API Brevo HTTPS; nessun allegato
+    "enabled": true,                   // false mantiene solo i report locali
+    "sendOn": "always",                // always | error | never; niente invio per passata vuota
+    "apiKeyEnvVar": "BREV_API_KEY",     // Nome effettivo nel tuo .env; default codice BREVO_API_KEY
+    "from": {"name": "soPDF", "email": "consegne@sogesispa.it"},
+    "to": ["d.cimarelli@keyfor.it"],     // Destinatari configurabili
+    "templateFile": "soPDF_email.jsonc", // Oggetto e corpo; percorso relativo al progetto
+    "timeoutSec": 30,
+    "retryDays": 7                     // Recupero riepiloghi falliti in un'unica email
   }
 }

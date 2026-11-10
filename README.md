@@ -16,8 +16,14 @@ Con `true`, barcode duplicati dentro un PDF conservano i suffissi `_1`, `_2`, ec
 Con `false` e più worker, vince l'ultima pubblicazione, non necessariamente l'ultima pagina:
 impostare `parallel.maxWorkers` a 0 o 1 per lavorazione sequenziale.
 Gli ingressi vengono fotografati prima della ripresa: nuovi arrivi attendono il cron successivo.
-Configurazione commentata inline: `soPDF_config.jsonc`. Nessuna email inviata
-in questa versione; log di testo con rotazione configurabile (default 10 MiB).
+Configurazione commentata inline: `soPDF_config.jsonc`; log con rotazione (default 10 MiB).
+Ogni lancio con elaborazioni produce **un solo report** JSON in `reports` e
+un riepilogo email tramite Brevo (nessun allegato). A.pdf, B.pdf, C.pdf: un report,
+una email, con tempi e conteggi per PDF e nomi dei file in errore.
+Oggetto e corpo si modificano in `soPDF_email.jsonc`, con segnaposto documentati.
+Mittente e destinatari sono in `email` nel config; chiave API solo in `.env` o
+nell'ambiente, col nome indicato da `email.apiKeyEnvVar` (default `BREVO_API_KEY`).
+`email.enabled=false` disattiva gli invii senza disattivare i report.
 `barcode.rotationOnFailureReading` è `true` per default: al primo fallimento
 ruota la pagina di 180° e ritenta una volta. Se legge, salva e comprime la pagina
 ruotata; altrimenti conserva la pagina non ruotata in `err_pdf`.

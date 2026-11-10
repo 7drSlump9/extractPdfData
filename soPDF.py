@@ -27,6 +27,7 @@ import time
 import uuid
 
 import pypdfium2 as pdfium
+import soPDF_reporting as reporting
 
 
 ROOT = Path(__file__).resolve().parent
@@ -35,7 +36,7 @@ DEFAULTS = {
     'extractor': {'python': '', 'mainPy': '', 'customer': 'UNKNOWN',
                   'template': 'barcode001', 'extraArgs': ['-no-ai-bootstrap'], 'timeoutSec': 120},
     'paths': {'in_pdf': 'in_pdf', 'out_pdf': 'out_pdf', 'err_pdf': 'err_pdf',
-              'worked_pdf': 'worked_pdf', 'tempDir': 'temp_split', 'logDir': 'logs'},
+              'worked_pdf': 'worked_pdf', 'tempDir': 'temp_split', 'logDir': 'logs', 'reportDir': 'reports'},
     'barcode': {'jsonField': 'barcode_top', 'validationRegex': '', 'invalidValues': ['N/A', ''],
                 'rotationOnFailureReading': True},
     'onDuplicate': 'suffix_n', 'out_pdf_dir_separation': False,
@@ -45,10 +46,10 @@ DEFAULTS = {
                     'grayscale': False, 'minGainPercent': 10, 'keepOriginalIfLarger': True,
                     'skipIfHasText': True},
     'log': {'fileName': 'split.log', 'maxSizeMB': 10, 'backupCount': 5, 'level': 'INFO'},
-    'email': {'sendOnError': False, 'smtpHost': '', 'smtpPort': 587, 'useTls': True,
-              'username': '', 'passwordEnvVar': 'SPLIT_SMTP_PASSWORD', 'from': '', 'to': [],
-              'subject': 'PDF split: barcode non letto',
-              'body': 'File {file}: pagine non lette: {pages}', 'attachFailedPdf': True},
+    'email': {'enabled': False, 'sendOn': 'always', 'apiKeyEnvVar': 'BREVO_API_KEY',
+              'from': {'name': 'soPDF', 'email': 'consegne@sogesispa.it'},
+              'to': ['d.cimarelli@keyfor.it'], 'templateFile': 'soPDF_email.jsonc',
+              'timeoutSec': 30, 'retryDays': 7},
 }
 
 
@@ -160,7 +161,19 @@ def load_config(path):
     number('compression', 'minGainPercent', 0, 100)
     number('log', 'maxSizeMB', 0.000001)
     number('log', 'backupCount', 0, integer=True)
-    number('email', 'smtpPort', 1, 65535, True)
+    number('email', 'timeoutSec', 0.001)
+    number('email', 'retryDays', 0)
+    if cfg['email']['sendOn'] not in ('always', 'error', 'never'):
+        raise ConfigError('email.sendOn: always, error oppure never')
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', cfg['email']['apiKeyEnvVar']):
+        raise ConfigError('email.apiKeyEnvVar non valido')
+    addresses = [cfg['email']['from']['email'], *cfg['email']['to']]
+    if not cfg['email']['to'] or any(not re.fullmatch(r'[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+', a) for a in addresses):
+        raise ConfigError('email: mittente o destinatari non validi')
+    try:
+        reporting.load_template(ROOT / cfg['email']['templateFile'], parse_jsonc)
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f'Template email: {exc}') from exc
     workers = cfg['parallel']['maxWorkers']
     if workers is not None and (type(workers) is not int or workers < 0):
         raise ConfigError('parallel.maxWorkers: richiesto intero >=0 oppure null')
@@ -586,21 +599,50 @@ class Job:
                 staged.unlink(missing_ok=True)
 
 
-def notify_errors(cfg, logger, job_id, origin, pages, attachments):
-    """Predisposizione soltanto. Nessuna rete, nessuna email inviata."""
-    if cfg['sendOnError']:
-        logger.warning('EMAIL | job=%s | invio NON implementato | file=%s pagine=%s allegati=%s',
-                       job_id, origin, pages, [str(p) for p in attachments])
-    else:
-        logger.info('EMAIL | job=%s | sendOnError=false; nessun invio | pagine=%s', job_id, pages)
-
-
 class Runner:
     def __init__(self, cfg, logger):
         self.cfg = cfg
         self.logger = logger
         self.paths = {key: (ROOT / value).resolve() for key, value in cfg['paths'].items()}
         self.totals = {'jobs': 0, 'ok': 0, 'ko': 0, 'failed': 0, 'savedBytes': 0}
+        self.report = None
+
+    def record_pdf(self, job, resumed=False, error=None):
+        if self.report is None:
+            return
+        state = job.state
+        pages = list(state.get('pages', {}).items())
+        finished = reporting.now()
+        done = [r for _, r in pages if r.get('status') == 'done']
+        errors = [{'file': Path(r.get('destination') or r.get('prepared') or state['origin']).name,
+                   'page': int(n), 'reason': r.get('reason', 'Lettura fallita')}
+                  for n, r in pages if r.get('kind') == 'ko']
+        if state.get('splitError'):
+            errors.append({'file': Path(state.get('archive', {}).get('destination', state['origin'])).name,
+                           'page': None, 'reason': state['splitError']})
+        if error:
+            errors.append({'file': state['origin'], 'page': None, 'reason': error})
+        status = ('errore lavorazione' if error else 'non dividibile' if state.get('splitError')
+                  else 'in corso' if state.get('phase') != 'done' else 'parziale' if errors else 'ok')
+        entry = {'jobId': job.folder.name, 'file': state['origin'],
+                 'outputName': state.get('outputName', job.folder.name),
+                 'startedAt': state.get('startedAt'), 'finishedAt': state.get('finishedAt') or finished,
+                 'resumed': resumed, 'durationIncludesPause': resumed,
+                 'totalPages': state.get('count') if state.get('count') else None,
+                 'processedPages': len(done), 'ok': sum(r.get('kind') == 'ok' for r in done),
+                 'ko': sum(r.get('kind') == 'ko' for r in done),
+                 'rotated': sum(bool(r.get('rotated')) for r in done), 'errors': errors, 'status': status}
+        entry['durationSec'] = reporting.duration(entry['startedAt'], entry['finishedAt'])
+        self.report.record(entry)
+
+    def process_tracked(self, job, resumed=False):
+        self._resumed = resumed
+        self.record_pdf(job, resumed)  # Checkpoint prima di iniziare; nessun dato perso su arresto.
+        try:
+            self.process_job(job)
+        except Exception as exc:
+            self.record_pdf(job, resumed, f'Errore infrastrutturale: {type(exc).__name__}')
+            raise
 
     def reserve_name(self, stem):
         """Chiamata sequenziale sotto instance_lock; mkdir riserva il nome su disco."""
@@ -649,6 +691,7 @@ class Runner:
                           'sourceHash': sha256(source),
                           'outputName': self.reserve_name(source.stem),
                           'outDirSeparation': self.cfg['out_pdf_dir_separation'],
+                          'startedAt': reporting.now(),
                           'count': 0, 'pages': {}, 'archive': {}})
         job.save()
         try:
@@ -720,6 +763,7 @@ class Runner:
             job.save()
             destination = job.publish(prepared, directory, stem, record, self.logger,
                                       overwrite=self.flat_out(job, record))
+            self.record_pdf(job, getattr(self, '_resumed', False))
         self.logger.info('MOVE | %s | %s -> %s', context, kind.upper(), destination)
 
     def process_job(self, job):
@@ -779,15 +823,14 @@ class Runner:
         if state['phase'] in ('archive', 'archive_error'):
             failed = state['phase'] == 'archive_error'
             bad = sorted(int(n) for n, record in state['pages'].items() if record.get('kind') == 'ko')
-            if bad or failed:
-                notify_errors(self.cfg['email'], self.logger, folder.name, state['origin'], bad,
-                              [Path(state['pages'][str(n)]['destination']) for n in bad])
             directory = self.job_directory(job, 'err_pdf' if failed else 'worked_pdf')
             stem = state.get('outputName', Path(state['origin']).stem)
             destination = job.publish(source, directory, stem, state['archive'], self.logger)
             self.logger.info('ARCHIVE | job=%s | -> %s', folder.name, destination)
             state['phase'] = 'done'
+            state.setdefault('finishedAt', reporting.now())
             job.save()
+            self.record_pdf(job, getattr(self, '_resumed', False))
             self.totals['jobs'] += 1
             self.totals['failed'] += int(failed)
             for record in state['pages'].values():
@@ -798,6 +841,8 @@ class Runner:
 
     def run(self):
         errors = False
+        template = reporting.load_template(ROOT / self.cfg['email']['templateFile'], parse_jsonc)
+        self.report = reporting.RunReport(self.paths['reportDir'], self.cfg['email'], template, ROOT, self.logger)
         # Snapshot prima anche della ripresa: nuovi arrivi attendono il prossimo cron.
         incoming = sorted((p for p in self.paths['in_pdf'].iterdir()
                            if p.is_file() and not p.is_symlink() and p.suffix.lower() == '.pdf'),
@@ -817,7 +862,12 @@ class Runner:
                         or ('outDirSeparation' in state and type(state['outDirSeparation']) is not bool)
                         or state['phase'] not in ('pickup', 'split', 'pages', 'archive', 'archive_error', 'done')):
                     raise ValueError('stato job non valido')
-                self.process_job(Job(folder, state))
+                if state['phase'] == 'done':
+                    if not self.cfg['keepTemp']:
+                        cleanup_job(Job(folder, state), self.logger)
+                    continue
+                self._resumed = True
+                self.process_tracked(Job(folder, state), resumed=True)
             except Exception:
                 errors = True
                 self.logger.exception('RESUME | job=%s | job conservato; intervento/riprova richiesto', folder.name)
@@ -825,12 +875,26 @@ class Runner:
             if not stable_file(source, self.cfg['minFileAgeSec']):
                 self.logger.info('SKIP | file=%s | non stabile o non disponibile', source.name)
                 continue
+            job = None
             try:
-                self.process_job(self.create_job(source))
+                self._resumed = False
+                job = self.create_job(source)
+                self.process_tracked(job)
             except Exception:
                 errors = True
+                if job is None:
+                    # Anche un pickup fallito deve comparire nel riepilogo.
+                    stub = Job(self.paths['tempDir'] / ('pickup_' + uuid.uuid4().hex),
+                               {'origin': source.name, 'startedAt': reporting.now(), 'phase': 'pickup'})
+                    self.record_pdf(stub, error='Presa in carico fallita; verificare log e file sorgente')
                 self.logger.exception('JOB | file=%s | errore infrastrutturale; conservato per ripresa', source.name)
         self.logger.info('SUMMARY | %s', self.totals)
+        try:
+            self.report.finish()
+        except Exception as exc:
+            self.logger.warning('REPORT/EMAIL | riepilogo conservato, completamento fallito (%s)', type(exc).__name__)
+            # Fallimento persistenza report deve risultare errore; invio fallito è gestito internamente.
+            errors = True
         return int(errors or self.totals['ko'] > 0 or self.totals['failed'] > 0)
 
 

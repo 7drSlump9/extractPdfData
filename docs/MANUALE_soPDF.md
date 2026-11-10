@@ -215,17 +215,56 @@ Ogni evento contiene data/ora locale, livello, operazione, job e pagina:
 ```
 
 Il riepilogo riporta job, pagine OK/KO e risparmio delle pagine di questa passata.
-Non viene registrata la password SMTP. Gli output del lettore possono contenere
+Non viene registrata la chiave API Brevo. Gli output del lettore possono contenere
 dati del documento: proteggere l'accesso ai log.
 
-### Email: solo predisposizione
+### Report ed email Brevo
 
-`email.sendOnError=false` è il booleano di abilitazione futuro. **Anche se true,
-questa versione non invia email**: scrive un avviso esplicito nel log.
-Configurabili host, porta, STARTTLS, utente, nome variabile d'ambiente password,
-mittente, lista destinatari, oggetto/testo con `{file}` e `{pages}`, allegati KO.
-Il secondo step implementerà un solo invio per job con tutte le pagine fallite.
-Nessuna lettura del `.env` o connessione SMTP viene effettuata ora.
+Un lancio con A.pdf, B.pdf e C.pdf produce **un report JSON e una email** per
+tutti e tre. Il report si trova in `paths.reportDir` (default `reports`), con
+nome `run_<data_ora>_<id>.json`: data e id evitano collisioni. Nessun report né
+email nuova quando non ci sono elaborazioni (i soli file instabili sono saltati).
+I report non vengono cancellati automaticamente; `reports/` è ignorata da Git.
+
+Il report contiene inizio/fine/durata del lancio e un blocco `pdfs` per sorgente:
+nome originale, outputName, tempi, fogli totali/processati, OK/KO, ruotati,
+esito e lista `errors` con nome file, pagina e motivo. Su PDF illeggibile il
+totale fogli è `null`, non un conteggio inventato. I job vecchi senza data di
+inizio hanno tempi non disponibili. Le durate dei job ripresi includono le pause.
+`totals` raccoglie i conteggi, `email` stato e tentativi. Il report viene scritto
+atomicamente prima e durante la lavorazione e prima della pulizia dei job.
+Un arresto brusco lascia l'ultimo checkpoint, non necessariamente l'ultima pagina.
+
+`email.enabled` abilita gli invii; `sendOn` ammette `always` (default), `error`,
+`never`. Nel config distribuito l'invio è abilitato. Il blocco SMTP precedente è
+stato sostituito: vecchie chiavi SMTP vanno rimosse dal config.
+`from` contiene nome e indirizzo verificato, `to` una lista di indirizzi.
+`apiKeyEnvVar` indica la variabile dell'ambiente o del `.env` accanto a soPDF.py:
+il default è `BREVO_API_KEY`; se hai usato `BREV_API_KEY`, imposta esattamente
+quel nome nel config oppure correggi tu il `.env`. L'ambiente prevale sul file.
+La chiave non è mai salvata nei report o stampata nei log.
+
+Oggetto, oggetto in caso di errori (`subjectOnError`, facoltativo), testo e HTML
+si configurano in `soPDF_email.jsonc`, indicato da `email.templateFile`.
+In cima al file trovi i segnaposto disponibili; per esempio
+`soPDF - {total_pdfs} PDF, {total_pages} fogli - {status}`.
+`fileTemplate` e `errorTemplate` compongono le righe per PDF ed errori.
+I dati HTML sono protetti; per scrivere graffe letterali usare `{{` e `}}`.
+Segnaposto sconosciuti vengono rifiutati prima dell'elaborazione.
+Dentro Python i dati sono disponibili in `Runner.report.data`; la funzione
+`soPDF_reporting.render_email` restituisce il messaggio e il dizionario dei
+segnaposto. Nessun allegato viene mai aggiunto.
+
+L'invio usa HTTPS `POST https://api.brevo.com/v3/smtp/email`, con timeout
+`email.timeoutSec`. Un errore di invio non cambia l'esito dell'elaborazione;
+stato `failed` nel report, WARNING nel log. I riepiloghi `pending`/`failed`
+entro `retryDays` (default 7) sono ritentati al lancio successivo, anche vuoto,
+in un'unica email insieme al riepilogo corrente, se presente. I job ripetuti
+nel recupero sono conteggiati una sola volta usando l'osservazione più recente.
+I report scaduti restano sul disco, ma non vengono più ritentati.
+Brevo 201 significa accettazione, non conferma della consegna. Un timeout o
+un arresto dopo l'accettazione può causare un duplicato al retry: non è garantito
+l'invio esattamente una volta. I report locali permettono sempre la verifica.
 
 ## Omonimie, lock e sicurezza
 

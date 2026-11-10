@@ -1,0 +1,15 @@
+{
+  // Oggetto facilmente modificabile. Dati passata:
+  // run_start, run_end, run_duration (secondi), total_pdfs, total_pages,
+  // ok, ko, rotated, status, error_count. Nei corpi anche {files}.
+  "subject": "soPDF - {total_pdfs} PDF, {total_pages} fogli - {status}",
+  "subjectOnError": "soPDF - ERRORI: {error_count} - {total_pdfs} PDF elaborati",
+  "bodyText": "Riepilogo soPDF\nInizio: {run_start}\nFine: {run_end}\nDurata: {run_duration} secondi\nPDF: {total_pdfs} | Fogli: {total_pages} | OK: {ok} | KO: {ko} | Ruotati: {rotated}\n\n{files}",
+  // HTML opzionale. I dati sostituiti sono protetti (escaping HTML).
+  "bodyHtml": "<html><body><h2>Riepilogo soPDF - {status}</h2><p>Inizio: {run_start}<br>Fine: {run_end}<br>Durata: {run_duration} secondi</p><p>PDF: {total_pdfs} | Fogli: {total_pages} | OK: {ok} | KO: {ko} | Ruotati: {rotated}</p><pre>{files}</pre></body></html>",
+  // Riga per PDF: file, output_name, started, finished, duration, pages,
+  // processed, ok, ko, rotated, status, resumed, errors.
+  "fileTemplate": "PDF: {file}\nEsito: {status} | Ripreso: {resumed}\nInizio: {started}\nFine: {finished}\nDurata: {duration} secondi\nFogli totali: {pages} | Processati: {processed} | OK: {ok} | KO: {ko} | Ruotati: {rotated}\nFile con errore:\n{errors}",
+  // Riga per errore: error_file, error_page, error_reason.
+  "errorTemplate": "- {error_file} (pagina {error_page}): {error_reason}"
+}
