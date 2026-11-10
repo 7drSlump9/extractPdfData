@@ -1,5 +1,6 @@
-"""Run: python -m unittest discover -s tests -p test_split_pdf.py -v"""
+"""Run: python -m unittest discover -s tests -p test_soPDF.py -v"""
 import copy
+from datetime import datetime
 import json
 import logging
 import os
@@ -14,7 +15,7 @@ from unittest.mock import patch
 from PIL import Image
 import pypdfium2 as pdfium
 
-import split_pdf as split
+import soPDF as split
 
 
 def make_pdf(path, count=4):
@@ -30,7 +31,12 @@ class SplitTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        clock = patch.object(split, 'datetime', wraps=datetime)
+        self.clock = clock.start()
+        self.addCleanup(clock.stop)
+        self.clock.now.return_value = datetime(2026, 11, 10, 10, 0)
         self.cfg = copy.deepcopy(split.DEFAULTS)
+        self.cfg['out_pdf_dir_separation'] = True
         self.cfg['paths'] = {key: str(self.root / key) for key in self.cfg['paths']}
         self.cfg['minFileAgeSec'] = 0
         self.cfg['compression']['enabled'] = False
@@ -84,7 +90,7 @@ class SplitTests(unittest.TestCase):
             path.write_text(json.dumps(value), encoding='utf-8')
             with self.subTest(value=value), self.assertRaises(split.ConfigError):
                 split.load_config(path)
-        self.assertEqual(split.load_config(split.ROOT / 'split_config.jsonc')['log']['maxSizeMB'], 10)
+        self.assertEqual(split.load_config(split.ROOT / 'soPDF_config.jsonc')['log']['maxSizeMB'], 10)
 
     def test_split_dimensions(self):
         source = self.input()
@@ -102,7 +108,7 @@ class SplitTests(unittest.TestCase):
         with patch.object(split.subprocess, 'run', side_effect=self.reader) as reader:
             self.assertEqual(self.runner.run(), 0)
             self.assertEqual(reader.call_count, 4)
-        self.assertEqual(sorted(p.name for p in self.runner.paths['out_pdf'].glob('*.pdf')),
+        self.assertEqual(sorted(p.name for p in self.runner.paths['out_pdf'].glob('*/*.pdf')),
                          ['S0000854.pdf', 'S0000854_1.pdf', 'S0000854_2.pdf', 'S0000854_3.pdf'])
         self.assertEqual(len(list(self.runner.paths['worked_pdf'].glob('*/*.pdf'))), 1)
         self.assertEqual(list(self.runner.paths['in_pdf'].iterdir()), [])
@@ -114,7 +120,7 @@ class SplitTests(unittest.TestCase):
         with patch.object(split.subprocess, 'run', side_effect=self.reader):
             self.assertEqual(self.runner.run(), 0)
         self.assertEqual(list(self.runner.paths['tempDir'].iterdir()), [])
-        self.assertEqual(len(list(self.runner.paths['worked_pdf'].glob('*/a.pdf'))), 1)
+        self.assertEqual(len(list(self.runner.paths['worked_pdf'].glob('*/a_101126.pdf'))), 1)
 
     def test_cleanup_failure_keeps_done_state_and_resumes(self):
         source = self.input(count=1)
@@ -157,7 +163,7 @@ class SplitTests(unittest.TestCase):
             self.input('a.PDF')
             with patch.object(split.subprocess, 'run', side_effect=fail_third):
                 self.assertEqual(self.runner.run(), 1)
-        failed = list(self.runner.paths['err_pdf'].glob('*/a_p3.pdf'))
+        failed = list(self.runner.paths['err_pdf'].glob('*/*_p3.pdf'))
         self.assertEqual(len(failed), 2)
         self.assertNotEqual(failed[0].parent, failed[1].parent)
         self.assertEqual(len(list(self.runner.paths['worked_pdf'].glob('*/*.pdf'))), 2)
@@ -168,7 +174,7 @@ class SplitTests(unittest.TestCase):
         self.input('b.PDF', 3)
         with patch.object(split.subprocess, 'run', side_effect=self.reader):
             self.assertEqual(self.runner.run(), 0)
-        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*.pdf'))), 6)
+        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*/*.pdf'))), 6)
         self.assertEqual(self.runner.totals['jobs'], 2)
 
     def test_page_errors(self):
@@ -196,7 +202,7 @@ class SplitTests(unittest.TestCase):
             with self.subTest(barcode=barcode):
                 path.write_text(json.dumps({'barcode': barcode}), encoding='utf-8')
                 self.assertFalse(split.load_config(path)['barcode']['validationRegex'].strip())
-        supplied = split.load_config(split.ROOT / 'split_config.jsonc')
+        supplied = split.load_config(split.ROOT / 'soPDF_config.jsonc')
         self.assertEqual(supplied['barcode']['validationRegex'], '^[sS][0-9]{7}$')
 
     def test_validation_regex_values_and_case(self):
@@ -250,7 +256,7 @@ class SplitTests(unittest.TestCase):
                 self.assertEqual(mock.call_count, 2)
                 self.assertEqual(Path(mock.call_args_list[1].args[0][-1]).name, '1.rot180.pdf')
         self.assertEqual(len(list(self.runner.paths['err_pdf'].glob('*/*.pdf'))), 4)
-        self.assertEqual(list(self.runner.paths['out_pdf'].glob('*.pdf')), [])
+        self.assertEqual(list(self.runner.paths['out_pdf'].glob('*/*.pdf')), [])
 
     def test_regex_valid_values_keep_filename_case(self):
         self.cfg['barcode']['validationRegex'] = '^[sS][0-9]{7}$'
@@ -265,7 +271,7 @@ class SplitTests(unittest.TestCase):
             with patch.object(split.subprocess, 'run', side_effect=reader) as mock:
                 self.assertEqual(self.runner.run(), 0)
                 self.assertEqual(mock.call_count, 1)
-        self.assertEqual(sorted(p.name for p in self.runner.paths['out_pdf'].glob('*.pdf')),
+        self.assertEqual(sorted(p.name for p in self.runner.paths['out_pdf'].glob('*/*.pdf')),
                          ['S0000957.pdf', 's0001087.pdf'])
 
     def test_na_still_retries_without_regex(self):
@@ -309,11 +315,11 @@ class SplitTests(unittest.TestCase):
         self.assertEqual(second.args[0].name, '1.rot180.pdf')
         self.assertEqual(second.args[1].name, '1.rot180.json')
         self.assertEqual(compress.call_args.args[0], second.args[0])
-        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / 'CODE.pdf') as document:
+        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / 'a_101126' / 'CODE.pdf') as document:
             page = document[0]
             self.assertEqual(page.get_rotation(), 180)
             page.close()
-        with pdfium.PdfDocument(next(self.runner.paths['worked_pdf'].glob('*/a.pdf'))) as document:
+        with pdfium.PdfDocument(next(self.runner.paths['worked_pdf'].glob('*/a_101126.pdf'))) as document:
             page = document[0]
             self.assertEqual(page.get_rotation(), 0)
             page.close()
@@ -367,11 +373,11 @@ class SplitTests(unittest.TestCase):
             self.assertEqual(self.runner.run(), 0)
         reader.assert_not_called()
         rotate.assert_not_called()
-        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / 'CODE.pdf') as document:
+        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / 'a_101126' / 'CODE.pdf') as document:
             page = document[0]
             self.assertEqual(page.get_rotation(), 180)
             page.close()
-        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*.pdf'))), 1)
+        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*/*.pdf'))), 1)
 
     def test_rotate_page_relative_to_existing_rotation(self):
         source = self.root / 'source.pdf'
@@ -422,12 +428,12 @@ class SplitTests(unittest.TestCase):
                 patch.object(split.subprocess, 'run', side_effect=render_read) as reader:
             self.assertEqual(self.runner.run(), 0)
         self.assertEqual(reader.call_count, 2)
-        self.assertTrue((self.runner.paths['out_pdf'] / 'ABC123.pdf').is_file())
+        self.assertTrue((self.runner.paths['out_pdf'] / 'upside_down_101126' / 'ABC123.pdf').is_file())
 
     def test_corrupt_pdf_archived_in_error(self):
         (self.runner.paths['in_pdf'] / 'bad.pdf').write_bytes(b'not a PDF')
         self.assertEqual(self.runner.run(), 1)
-        self.assertEqual(len(list(self.runner.paths['err_pdf'].glob('*/bad.pdf'))), 1)
+        self.assertEqual(len(list(self.runner.paths['err_pdf'].glob('bad_101126/bad_101126.pdf'))), 1)
 
     def test_resume_completed_pages_and_publish_intent(self):
         source = self.input(count=2)
@@ -443,7 +449,7 @@ class SplitTests(unittest.TestCase):
         with patch.object(split.subprocess, 'run', side_effect=self.reader) as reader:
             self.assertEqual(self.runner.run(), 0)
             self.assertEqual(reader.call_count, 1)
-        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*.pdf'))), 2)
+        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*/*.pdf'))), 2)
 
     def test_disk_failure_keeps_original_for_resume(self):
         self.input(count=1)
@@ -451,7 +457,7 @@ class SplitTests(unittest.TestCase):
                 patch.object(split.os, 'link', side_effect=OSError('disk full')):
             self.assertEqual(self.runner.run(), 1)
         self.assertEqual(len(list(self.runner.paths['tempDir'].glob('*/a.pdf'))), 1)
-        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*.pdf'))), 0)
+        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*/*.pdf'))), 0)
         with patch.object(split.subprocess, 'run') as reader:
             # Intento già pronto: nessuna estrazione ripetuta.
             self.assertEqual(self.runner.run(), 0)
@@ -491,6 +497,262 @@ class SplitTests(unittest.TestCase):
         Path(job.state['pages']['1']['destination']).unlink()
         self.assertEqual(self.runner.run(), 1)
         self.assertTrue((job.folder / source.name).exists())
+
+    def test_same_source_name_sequence_and_next_day(self):
+        names = []
+        for _ in range(3):
+            source = self.input('A.pdf', count=1)
+            job = self.runner.create_job(source)
+            names.append(job.state['outputName'])
+            with patch.object(split.subprocess, 'run', side_effect=self.reader):
+                self.runner.process_job(job)
+        self.assertEqual(names, ['A_101126', 'A_101126_1', 'A_101126_2'])
+        for name in names:
+            self.assertTrue((self.runner.paths['out_pdf'] / name / 'S0000854.pdf').is_file())
+            self.assertTrue((self.runner.paths['worked_pdf'] / name / f'{name}.pdf').is_file())
+        self.clock.now.return_value = datetime(2026, 11, 11)
+        job = self.runner.create_job(self.input('A.pdf', count=1))
+        self.assertEqual(job.state['outputName'], 'A_111126')
+
+    def test_case_insensitive_reservation_in_all_roots_and_jobs(self):
+        (self.runner.paths['out_pdf'] / 'A_101126').mkdir()
+        (self.runner.paths['err_pdf'] / 'A_101126_1').mkdir()
+        (self.runner.paths['worked_pdf'] / 'A_101126_2').mkdir()
+        job = self.runner.create_job(self.input('a.PDF', count=1))
+        self.assertEqual(job.state['outputName'], 'a_101126_3')
+        # La prenotazione nello stato resta efficace anche senza cartella su worked_pdf.
+        (self.runner.paths['worked_pdf'] / job.state['outputName']).rmdir()
+        next_job = self.runner.create_job(self.input('A.pdf', count=1))
+        self.assertEqual(next_job.state['outputName'], 'A_101126_4')
+
+    def test_three_sources_separate_ok_and_error_directories(self):
+        for name in ('A.pdf', 'b.pdf', 'c.pdf'):
+            self.input(name, count=2)
+
+        def reader(command, **kwargs):
+            if Path(command[-1]).name.split('.')[0] == '2':
+                return subprocess.CompletedProcess(command, 1, 'unreadable', '')
+            return self.reader(command, **kwargs)
+
+        with patch.object(split.subprocess, 'run', side_effect=reader):
+            self.assertEqual(self.runner.run(), 1)
+        for name in ('A_101126', 'b_101126', 'c_101126'):
+            self.assertTrue((self.runner.paths['out_pdf'] / name / 'S0000854.pdf').is_file())
+            self.assertTrue((self.runner.paths['err_pdf'] / name / f'{name}_p2.pdf').is_file())
+            self.assertTrue((self.runner.paths['worked_pdf'] / name / f'{name}.pdf').is_file())
+
+    def test_all_ko_does_not_create_ok_folder(self):
+        self.input(count=2)
+        with patch.object(split, 'extract_barcode', side_effect=split.PageError('empty')):
+            self.assertEqual(self.runner.run(), 1)
+        self.assertFalse((self.runner.paths['out_pdf'] / 'a_101126').exists())
+        self.assertEqual(len(list((self.runner.paths['err_pdf'] / 'a_101126').glob('*.pdf'))), 2)
+
+    def test_snapshot_ignores_arrivals_during_resume_and_processing(self):
+        self.runner.create_job(self.input('old.pdf', count=1))
+        for name in ('a.pdf', 'b.pdf', 'c.pdf'):
+            self.input(name, count=1)
+        calls = 0
+
+        def reader(command, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:  # Durante ripresa.
+                self.input('d.pdf', count=1)
+            if calls == 2:  # Durante nuovi ingressi.
+                self.input('e.pdf', count=1)
+            return self.reader(command, **kwargs)
+
+        with patch.object(split.subprocess, 'run', side_effect=reader):
+            self.assertEqual(self.runner.run(), 0)
+        self.assertEqual(calls, 4)
+        self.assertEqual(sorted(p.name for p in self.runner.paths['in_pdf'].iterdir()), ['d.pdf', 'e.pdf'])
+        with patch.object(split.subprocess, 'run', side_effect=self.reader) as mock:
+            self.assertEqual(self.runner.run(), 0)
+            self.assertEqual(mock.call_count, 2)
+
+    def test_resume_keeps_name_across_midnight(self):
+        job = self.runner.create_job(self.input(count=1))
+        self.clock.now.return_value = datetime(2026, 11, 11)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.assertEqual(self.runner.run(), 0)
+        self.assertTrue((self.runner.paths['out_pdf'] / job.state['outputName'] / 'S0000854.pdf').is_file())
+        self.assertEqual(job.state['outputName'], 'a_101126')
+
+    def test_legacy_partial_job_keeps_old_paths(self):
+        source = self.input(count=2)
+        job = self.runner.create_job(source)
+        name = job.state.pop('outputName')
+        (self.runner.paths['worked_pdf'] / name).rmdir()
+        job.state.update(phase='pages', count=split.split_pages(job.folder / source.name, job.folder / 'pages'))
+        job.save()
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.runner.process_page(job, 1)
+            self.assertEqual(self.runner.run(), 0)
+        self.assertTrue((self.runner.paths['out_pdf'] / 'S0000854.pdf').is_file())
+        self.assertTrue((self.runner.paths['out_pdf'] / 'S0000854_1.pdf').is_file())
+        self.assertTrue((self.runner.paths['worked_pdf'] / job.folder.name / 'a.pdf').is_file())
+
+    def test_duplicate_barcodes_are_case_insensitive(self):
+        self.input(count=2)
+        with patch.object(split, 'extract_barcode', side_effect=['S0000957', 's0000957']):
+            self.assertEqual(self.runner.run(), 0)
+        names = sorted(p.name for p in (self.runner.paths['out_pdf'] / 'a_101126').iterdir())
+        self.assertEqual(names, ['S0000957.pdf', 's0000957_1.pdf'])
+
+    def flat_job(self, count=2):
+        self.cfg['out_pdf_dir_separation'] = False
+        job = self.runner.create_job(self.input(count=count))
+        job.state.update(phase='pages', count=split.split_pages(job.folder / 'a.pdf', job.folder / 'pages'))
+        # Pagine con dimensioni distinte per verificare quale contenuto rimane.
+        for number in range(1, count + 1):
+            with pdfium.PdfDocument.new() as document:
+                page = document.new_page(300 + number, 500)
+                page.close()
+                document.save(job.folder / 'pages' / f'{number}.pdf')
+        job.save()
+        return job
+
+    def test_flat_config_default_and_type(self):
+        path = self.root / 'config.jsonc'
+        path.write_text('{}', encoding='utf-8')
+        self.assertFalse(split.load_config(path)['out_pdf_dir_separation'])
+        for value in ('false', 0, None):
+            path.write_text(json.dumps({'out_pdf_dir_separation': value}), encoding='utf-8')
+            with self.subTest(value=value), self.assertRaises(split.ConfigError):
+                split.load_config(path)
+
+    def test_flat_same_pdf_last_page_overwrites(self):
+        job = self.flat_job()
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.runner.process_page(job, 1)
+            expected = (job.folder / 'pages' / '2.pdf').read_bytes()
+            with self.assertLogs(self.logger, logging.WARNING) as logs:
+                self.runner.process_job(job)
+        self.assertIn('SOVRASCRITTURA', '\n'.join(logs.output))
+        out = self.runner.paths['out_pdf']
+        self.assertEqual([p.name for p in out.iterdir()], ['S0000854.pdf'])
+        self.assertEqual((out / 'S0000854.pdf').read_bytes(), expected)
+        self.assertTrue((self.runner.paths['worked_pdf'] / 'a_101126' / 'a_101126.pdf').is_file())
+
+    def test_flat_different_sources_last_wins(self):
+        self.cfg['out_pdf_dir_separation'] = False
+        self.input('a.pdf', count=1)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.assertEqual(self.runner.run(), 0)
+        source = self.input('b.pdf', count=1)
+        job = self.runner.create_job(source)
+        job.state.update(phase='pages', count=split.split_pages(job.folder / source.name, job.folder / 'pages'))
+        with pdfium.PdfDocument.new() as document:
+            page = document.new_page(200, 300)
+            page.close()
+            document.save(job.folder / 'pages' / '1.pdf')
+        expected = (job.folder / 'pages' / '1.pdf').read_bytes()
+        job.save()
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.runner.process_job(job)
+        self.assertEqual((self.runner.paths['out_pdf'] / 'S0000854.pdf').read_bytes(), expected)
+        self.assertEqual(len(list(self.runner.paths['out_pdf'].iterdir())), 1)
+
+    def test_flat_case_change_keeps_new_name(self):
+        job = self.flat_job()
+        with patch.object(split, 'extract_barcode', side_effect=['S0000957', 's0000957']):
+            self.runner.process_page(job, 1)
+            expected = (job.folder / 'pages' / '2.pdf').read_bytes()
+            self.runner.process_job(job)
+        files = list(self.runner.paths['out_pdf'].iterdir())
+        self.assertEqual([p.name for p in files], ['s0000957.pdf'])
+        self.assertEqual(files[0].read_bytes(), expected)
+
+    def test_flat_interrupted_replace_preserves_old_and_resumes(self):
+        job = self.flat_job(count=1)
+        target = self.runner.paths['out_pdf'] / 'S0000854.pdf'
+        target.write_bytes(b'old content')
+        real_replace = split.os.replace
+
+        def fail_publication(source, destination):
+            if Path(destination) == target:
+                raise OSError('disk error')
+            return real_replace(source, destination)
+
+        with patch.object(split.subprocess, 'run', side_effect=self.reader), \
+                patch.object(split.os, 'replace', side_effect=fail_publication):
+            with self.assertRaises(OSError):
+                self.runner.process_page(job, 1)
+        self.assertEqual(target.read_bytes(), b'old content')
+        expected = (job.folder / 'pages' / '1.pdf').read_bytes()
+        self.cfg['out_pdf_dir_separation'] = True  # Modalità del job resta false.
+        with patch.object(split, 'extract_barcode') as reader:
+            self.assertEqual(self.runner.run(), 0)
+        reader.assert_not_called()
+        self.assertEqual(target.read_bytes(), expected)
+        self.assertEqual(len(list(target.parent.iterdir())), 1)
+
+    def test_flat_interrupted_case_rename_resumes(self):
+        job = self.flat_job(count=1)
+        out = self.runner.paths['out_pdf']
+        (out / 'S0000957.pdf').write_bytes(b'old content')
+        real_replace = split.os.replace
+
+        def fail_case_rename(source, destination):
+            if Path(source).name == 'S0000957.pdf' and Path(destination).name == 's0000957.pdf':
+                raise OSError('rename interrupted')
+            return real_replace(source, destination)
+
+        with patch.object(split, 'extract_barcode', return_value='s0000957'), \
+                patch.object(split.os, 'replace', side_effect=fail_case_rename):
+            with self.assertRaises(OSError):
+                self.runner.process_page(job, 1)
+        with patch.object(split, 'extract_barcode') as reader:
+            self.assertEqual(self.runner.run(), 0)
+        reader.assert_not_called()
+        files = list(out.iterdir())
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0].name, 's0000957.pdf')
+        with pdfium.PdfDocument(files[0]) as document:
+            page = document[0]
+            self.assertEqual(page.get_width(), 301)
+            page.close()
+
+    def test_flat_completed_replaced_output_does_not_block_resume(self):
+        job = self.flat_job(count=1)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.runner.process_page(job, 1)
+        target = Path(job.state['pages']['1']['destination'])
+        target.write_bytes(b'replaced by later job')
+        with patch.object(split, 'extract_barcode') as reader:
+            self.assertEqual(self.runner.run(), 0)
+        reader.assert_not_called()
+        self.assertEqual(target.read_bytes(), b'replaced by later job')
+
+    def test_flat_completed_missing_output_still_errors(self):
+        job = self.flat_job(count=1)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.runner.process_page(job, 1)
+        Path(job.state['pages']['1']['destination']).unlink()
+        self.assertEqual(self.runner.run(), 1)
+        self.assertTrue((job.folder / 'a.pdf').is_file())
+
+    def test_flat_parallel_warns_without_forcing_workers(self):
+        self.cfg['out_pdf_dir_separation'] = False
+        self.cfg['parallel']['maxWorkers'] = 3
+        self.input(count=4)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader), \
+                self.assertLogs(self.logger, logging.WARNING) as logs:
+            self.assertEqual(self.runner.run(), 0)
+        self.assertIn('ordine sovrascritture non garantito', '\n'.join(logs.output))
+        self.assertEqual(self.cfg['parallel']['maxWorkers'], 3)
+        self.assertEqual(len(list(self.runner.paths['out_pdf'].iterdir())), 1)
+
+    def test_previous_folder_job_keeps_folders_after_config_change(self):
+        job = self.runner.create_job(self.input(count=1))
+        # Versione precedente aveva outputName ma nessun campo modalità.
+        del job.state['outDirSeparation']
+        job.save()
+        self.cfg['out_pdf_dir_separation'] = False
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.assertEqual(self.runner.run(), 0)
+        self.assertTrue((self.runner.paths['out_pdf'] / 'a_101126' / 'S0000854.pdf').is_file())
 
     def test_file_stability(self):
         source = self.input(count=1)

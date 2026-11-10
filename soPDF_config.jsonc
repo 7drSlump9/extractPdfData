@@ -1,4 +1,4 @@
-{
+{ // soPDF: configurazione dello split e lettura barcode
   "extractor": {                       // Lettore esterno; main.py non viene modificato
     "python": "",                      // Vuoto = stesso Python dell'utilità
     "mainPy": "",                      // Vuoto = main.py accanto all'utilità
@@ -9,9 +9,9 @@
   },
   "paths": {                           // Relativi alla cartella dell'utilità, non al config
     "in_pdf": "in_pdf",                // PDF sorgenti, anche estensione .PDF
-    "out_pdf": "out_pdf",              // Pagine OK nominate col barcode
-    "err_pdf": "err_pdf",              // <jobId>/<origine>_p<N>.pdf per le pagine KO
-    "worked_pdf": "worked_pdf",        // <jobId>/<origine>.pdf già elaborato
+    "out_pdf": "out_pdf",              // Pagine OK; sottocartelle solo con out_pdf_dir_separation=true
+    "err_pdf": "err_pdf",              // Stessa sottocartella; <cartella>_p<N>.pdf per KO
+    "worked_pdf": "worked_pdf",        // Stessa sottocartella; <cartella>.pdf originale archiviato
     "tempDir": "temp_split",           // Job temporanei, stato di ripresa e lock
     "logDir": "logs"                   // Cartella log di testo, nessun DB dell'utilità
   },
@@ -21,12 +21,13 @@
     "invalidValues": ["N/A", ""],      // Valori considerati mancata lettura
     "rotationOnFailureReading": true   // Al primo fallimento ruota la pagina di 180° e rilegge una volta
   },
-  "onDuplicate": "suffix_n",           // Duplicati: _1, _2, ...; mai sovrascrivere
+  "out_pdf_dir_separation": false,     // false: OK tutti in out_pdf, sovrascrive; true: cartelle per sorgente + suffissi
+  "onDuplicate": "suffix_n",           // _1, _2, ...; non applicato agli OK in modalità piatta (sovrascrive)
   "minFileAgeSec": 5,                  // Intervallo di stabilità dimensione/data prima del pickup
   "lockStaleMin": 60,                  // Recupera lock vecchi solo se PID locale non più vivo
   "keepTemp": false,                   // true conserva anche i job completati per debug
   "parallel": {
-    "maxWorkers": 8                    // Mancante/null/0/1 = sequenziale; >1 = thread + subprocess
+    "maxWorkers": 1                    // Mancante/null/0/1 = sequenziale; >1 = thread + subprocess
   },
   "compression": {                     // Solo dopo lettura OK; originali e KO restano invariati
     "enabled": true,                   // false salta la compressione

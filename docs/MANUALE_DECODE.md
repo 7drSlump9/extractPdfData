@@ -183,7 +183,7 @@ produzione. L'impostazione OCR storica `ocrDpi` viene caricata all'avvio del pro
 Esempio PowerShell con percorsi assoluti:
 
 ```powershell
-python 'C:\Users\d.cimarelli\Documents\dev\python\extractPdfData\main.py' `
+python '<cartella-progetto>\main.py' `
   -customer 'CLIENTE' -template 'BARCODE_ALTO_DX' -no-ai-bootstrap `
   -outputTemplatePath 'C:\dati\risultato.json' -eo 'C:\dati\documento.pdf'
 ```
@@ -202,7 +202,7 @@ import json
 import subprocess
 from pathlib import Path
 
-root = Path(r"C:\Users\d.cimarelli\Documents\dev\python\extractPdfData")
+root = Path(r"<cartella-progetto>")
 result_path = Path(r"C:\dati\risultato.json")
 completed = subprocess.run([
     "python", str(root / "main.py"),
@@ -287,8 +287,8 @@ Il requirements attuale comprende ancora i motori OCR/HTR: non è stato ridotto.
 ## Verifica tecnica
 
 ```powershell
-python -m unittest discover -s 'C:\Users\d.cimarelli\Documents\dev\python\extractPdfData\tests' -v
-npm.cmd --prefix 'C:\Users\d.cimarelli\Documents\dev\python\extractPdfData\web' run build
+python -m unittest discover -s '<cartella-progetto>\tests' -v
+npm.cmd --prefix '<cartella-progetto>\web' run build
 ```
 
 Test inclusi: pattern Code128 di riferimento indipendente dalla tabella decoder,

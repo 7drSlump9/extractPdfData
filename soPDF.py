@@ -1,7 +1,7 @@
 """Split PDF per barcode. CLI esterna, JSONC, job riprendibili, nessun DB.
 
-Run: python split_pdf.py [-config split_config.jsonc]
-Tests: python -m unittest discover -s tests -p test_split_pdf.py -v
+Run: python soPDF.py [-config soPDF_config.jsonc]
+Tests: python -m unittest discover -s tests -p test_soPDF.py -v
 """
 import argparse
 import copy
@@ -38,7 +38,8 @@ DEFAULTS = {
               'worked_pdf': 'worked_pdf', 'tempDir': 'temp_split', 'logDir': 'logs'},
     'barcode': {'jsonField': 'barcode_top', 'validationRegex': '', 'invalidValues': ['N/A', ''],
                 'rotationOnFailureReading': True},
-    'onDuplicate': 'suffix_n', 'minFileAgeSec': 5, 'lockStaleMin': 60, 'keepTemp': False,
+    'onDuplicate': 'suffix_n', 'out_pdf_dir_separation': False,
+    'minFileAgeSec': 5, 'lockStaleMin': 60, 'keepTemp': False,
     'parallel': {'maxWorkers': 1},
     'compression': {'enabled': True, 'engine': 'raster', 'dpi': 150, 'jpegQuality': 60,
                     'grayscale': False, 'minGainPercent': 10, 'keepOriginalIfLarger': True,
@@ -210,7 +211,7 @@ class SizeRotatingHandler(RotatingFileHandler):
 
 
 def setup_logging(cfg, log_dir):
-    logger = logging.getLogger('split_pdf')
+    logger = logging.getLogger('soPDF')
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
         handler.close()
@@ -508,19 +509,24 @@ class Job:
     def save(self):
         atomic_json(self.folder / 'job.json', self.state)
 
-    def publish(self, source, directory, stem, record, logger):
-        """Intento persistente prima del link atomico. Ripresa senza duplicazione."""
+    def publish(self, source, directory, stem, record, logger, overwrite=False):
+        """Intento persistente, staging e link esclusivo oppure replace per gli OK piatti."""
         directory.mkdir(parents=True, exist_ok=True)
         with self.lock:
             intent = record.get('intent')
             if intent:
                 previous = Path(intent['path'])
                 if previous.exists():
-                    if sha256(previous) != intent['sha256']:
+                    previous_hash = sha256(previous)
+                    if previous_hash != intent['sha256'] and not overwrite:
                         raise OSError(f'Output modificato dopo interruzione: {previous}')
-                    record.update(status='done', destination=str(previous))
-                    self.save()
-                    return previous
+                    exact_name = any(p.name == previous.name for p in directory.iterdir())
+                    if previous_hash == intent['sha256'] and (not overwrite or exact_name):
+                        record.update(status='done', destination=str(previous))
+                        self.save()
+                        return previous
+                    logger.warning('RESUME | job=%s | ripubblico output o completo cambio nome: %s',
+                                   self.folder.name, previous)
             digest = sha256(source)
             # Staging sullo stesso filesystem della destinazione, nessun file parziale .pdf.
             fd, name = tempfile.mkstemp(prefix='.split-', suffix='.tmp', dir=directory)
@@ -530,11 +536,37 @@ class Job:
                     shutil.copyfileobj(incoming, out)
                     out.flush()
                     os.fsync(out.fileno())
+                if overwrite:
+                    candidate = directory / f'{stem}.pdf'
+                    record['intent'] = {'path': str(candidate), 'sha256': digest}
+                    record['status'] = 'publishing'
+                    self.save()
+                    matches = [p for p in directory.iterdir()
+                               if p.name.casefold() == candidate.name.casefold()]
+                    # Su Linux due varianti case possono preesistere: non eliminarle
+                    # prima che il nuovo contenuto sia pubblicato con successo.
+                    for old in matches:
+                        if not old.is_file() or old.is_symlink():
+                            raise OSError(f'Destinazione non sicura: {old}')
+                        logger.warning('MOVE | job=%s | SOVRASCRITTURA %s sha256=%s -> %s',
+                                       self.folder.name, old, sha256(old), digest)
+                    target = matches[0] if matches else candidate
+                    os.replace(staged, target)
+                    if target.name != candidate.name:
+                        os.replace(target, candidate)
+                    for old in matches:
+                        if old.name != candidate.name and old.exists():
+                            # Non cancellare il nuovo file su filesystem case-insensitive.
+                            if not os.path.samefile(old, candidate):
+                                old.unlink()
+                    record.update(status='done', destination=str(candidate))
+                    self.save()
+                    return candidate
                 index = 0
                 while True:
                     candidate = directory / f'{stem}{"_" + str(index) if index else ""}.pdf'
                     # Se già esiste, nessun intento registrato per il file di un altro job.
-                    if candidate.exists():
+                    if any(p.name.casefold() == candidate.name.casefold() for p in directory.iterdir()):
                         index += 1
                         continue
                     record['intent'] = {'path': str(candidate), 'sha256': digest}
@@ -570,12 +602,53 @@ class Runner:
         self.paths = {key: (ROOT / value).resolve() for key, value in cfg['paths'].items()}
         self.totals = {'jobs': 0, 'ok': 0, 'ko': 0, 'failed': 0, 'savedBytes': 0}
 
+    def reserve_name(self, stem):
+        """Chiamata sequenziale sotto instance_lock; mkdir riserva il nome su disco."""
+        occupied = {p.name.casefold() for key in ('out_pdf', 'err_pdf', 'worked_pdf')
+                    for p in self.paths[key].iterdir()}
+        for state_path in self.paths['tempDir'].glob('*/job.json'):
+            try:
+                state = json.loads(state_path.read_text(encoding='utf-8'))
+                if isinstance(state.get('outputName'), str):
+                    occupied.add(state['outputName'].casefold())
+            except (OSError, ValueError, AttributeError):
+                # La prenotazione su worked_pdf resta; il job danneggiato è segnalato da run.
+                self.logger.warning('RESERVE | stato non leggibile: %s', state_path)
+        base = safe_stem(stem) + datetime.now().strftime('_%d%m%y')
+        index = 0
+        while True:
+            name = base + (f'_{index}' if index else '')
+            if name.casefold() not in occupied:
+                try:
+                    (self.paths['worked_pdf'] / name).mkdir()
+                    return name
+                except FileExistsError:
+                    occupied.add(name.casefold())
+            index += 1
+
+    def flat_out(self, job, record):
+        return job.state.get('outDirSeparation') is False and record.get('kind') == 'ok'
+
+    def job_directory(self, job, key):
+        """I job preesistenti senza outputName mantengono tutte le destinazioni legacy."""
+        if key == 'out_pdf' and job.state.get('outDirSeparation') is False:
+            return self.paths[key]
+        if 'outputName' in job.state:
+            name = job.state['outputName']
+            if (not isinstance(name, str) or name in ('', '.', '..')
+                    or re.search(r'[\\/:*?"<>|\x00-\x1f]', name)):
+                raise ValueError('outputName non valido')
+            return self.paths[key] / name
+        return self.paths[key] if key == 'out_pdf' else self.paths[key] / job.folder.name
+
     def create_job(self, source):
         job_id = datetime.now().strftime('%Y%m%d_%H%M%S_') + safe_stem(source.stem)[:40] + '_' + uuid.uuid4().hex
         folder = self.paths['tempDir'] / job_id
         folder.mkdir()
         job = Job(folder, {'version': 1, 'origin': source.name, 'phase': 'pickup',
                           'sourceHash': sha256(source),
+                          'outputName': self.reserve_name(source.stem),
+                          'outDirSeparation': self.cfg['out_pdf_dir_separation'],
                           'count': 0, 'pages': {}, 'archive': {}})
         job.save()
         try:
@@ -589,6 +662,7 @@ class Runner:
             raise
         job.state['phase'] = 'split'
         job.save()
+        self.logger.info('DESTINATION | job=%s | outputName=%s', job_id, job.state['outputName'])
         self.logger.info('PICKUP | job=%s | file=%s bytes=%s sha256=%s',
                          job_id, source.name, (folder / source.name).stat().st_size,
                          sha256(folder / source.name))
@@ -606,7 +680,8 @@ class Runner:
                 # Riprende la pubblicazione con lo stesso file e la stessa destinazione.
                 prepared = Path(record['prepared'])
                 target = Path(record['intent']['path'])
-                destination = job.publish(prepared, target.parent, record['stem'], record, self.logger)
+                destination = job.publish(prepared, target.parent, record['stem'], record, self.logger,
+                                          overwrite=self.flat_out(job, record))
                 self.logger.info('MOVE | %s | ripresa -> %s', context, destination)
                 return
         rotated = False
@@ -631,19 +706,20 @@ class Runner:
         except PageError as exc:
             self.logger.error('EXTRACT | %s | %s', context, exc)
             kind, prepared = 'ko', source
-            stem = safe_stem(Path(job.state['origin']).stem) + f'_p{number}'
-            directory = self.paths['err_pdf'] / job.folder.name
+            stem = job.state.get('outputName', safe_stem(Path(job.state['origin']).stem)) + f'_p{number}'
+            directory = self.job_directory(job, 'err_pdf')
             reason = str(exc)
         else:
             kind, reason = 'ok', ''
             prepared = compress_page(source, source.with_suffix('.compressed'),
                                      self.cfg['compression'], self.logger, context)
-            directory = self.paths['out_pdf']
+            directory = self.job_directory(job, 'out_pdf')
         with job.lock:
             record.update(kind=kind, reason=reason, prepared=str(prepared), stem=stem, rotated=rotated,
                           savedBytes=source.stat().st_size - prepared.stat().st_size)
             job.save()
-        destination = job.publish(prepared, directory, stem, record, self.logger)
+            destination = job.publish(prepared, directory, stem, record, self.logger,
+                                      overwrite=self.flat_out(job, record))
         self.logger.info('MOVE | %s | %s -> %s', context, kind.upper(), destination)
 
     def process_job(self, job):
@@ -678,11 +754,18 @@ class Runner:
             for record in state['pages'].values():
                 if record.get('status') == 'done':
                     destination = Path(record['destination'])
-                    if not destination.is_file() or sha256(destination) != record['intent']['sha256']:
+                    if self.flat_out(job, record) and not destination.is_file() and destination.parent.is_dir():
+                        destination = next((p for p in destination.parent.iterdir()
+                                            if p.name.casefold() == destination.name.casefold()), destination)
+                    if (not destination.is_file() or
+                            (not self.flat_out(job, record) and sha256(destination) != record['intent']['sha256'])):
                         raise OSError(f'Output completato assente o modificato: {destination}')
             pending = [n for n in range(1, state['count'] + 1)
                        if state['pages'].get(str(n), {}).get('status') != 'done']
             workers = self.cfg['parallel']['maxWorkers']
+            if state.get('outDirSeparation') is False and workers > 1:
+                self.logger.warning('OVERWRITE | job=%s | workers=%s: ordine sovrascritture non garantito; '
+                                    'usare maxWorkers 0 o 1 per ordine sequenziale', folder.name, workers)
             if workers == 1:
                 for number in pending:
                     self.process_page(job, number)
@@ -699,8 +782,9 @@ class Runner:
             if bad or failed:
                 notify_errors(self.cfg['email'], self.logger, folder.name, state['origin'], bad,
                               [Path(state['pages'][str(n)]['destination']) for n in bad])
-            directory = self.paths['err_pdf' if failed else 'worked_pdf'] / folder.name
-            destination = job.publish(source, directory, Path(state['origin']).stem, state['archive'], self.logger)
+            directory = self.job_directory(job, 'err_pdf' if failed else 'worked_pdf')
+            stem = state.get('outputName', Path(state['origin']).stem)
+            destination = job.publish(source, directory, stem, state['archive'], self.logger)
             self.logger.info('ARCHIVE | job=%s | -> %s', folder.name, destination)
             state['phase'] = 'done'
             job.save()
@@ -714,6 +798,10 @@ class Runner:
 
     def run(self):
         errors = False
+        # Snapshot prima anche della ripresa: nuovi arrivi attendono il prossimo cron.
+        incoming = sorted((p for p in self.paths['in_pdf'].iterdir()
+                           if p.is_file() and not p.is_symlink() and p.suffix.lower() == '.pdf'),
+                          key=lambda p: (p.name.casefold(), p.name))
         # Prima la ripresa, poi i nuovi ingressi. Nessun ricalcolo di pagine già smistate.
         for folder in sorted(self.paths['tempDir'].iterdir()):
             if not folder.is_dir():
@@ -726,15 +814,13 @@ class Runner:
                 state = json.loads((folder / 'job.json').read_text(encoding='utf-8'))
                 if (state.get('version') != 1 or not isinstance(state.get('origin'), str)
                         or Path(state['origin']).name != state['origin']
+                        or ('outDirSeparation' in state and type(state['outDirSeparation']) is not bool)
                         or state['phase'] not in ('pickup', 'split', 'pages', 'archive', 'archive_error', 'done')):
                     raise ValueError('stato job non valido')
                 self.process_job(Job(folder, state))
             except Exception:
                 errors = True
                 self.logger.exception('RESUME | job=%s | job conservato; intervento/riprova richiesto', folder.name)
-        incoming = sorted((p for p in self.paths['in_pdf'].iterdir()
-                           if p.is_file() and not p.is_symlink() and p.suffix.lower() == '.pdf'),
-                          key=lambda p: (p.name.casefold(), p.name))
         for source in incoming:
             if not stable_file(source, self.cfg['minFileAgeSec']):
                 self.logger.info('SKIP | file=%s | non stabile o non disponibile', source.name)
@@ -749,8 +835,8 @@ class Runner:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Split PDF per barcode, una passata su in_pdf.')
-    parser.add_argument('-config', '--config', default=str(ROOT / 'split_config.jsonc'))
+    parser = argparse.ArgumentParser(description='soPDF: split PDF per barcode, una passata su in_pdf.')
+    parser.add_argument('-config', '--config', default=str(ROOT / 'soPDF_config.jsonc'))
     args = parser.parse_args(argv)
     try:
         cfg = load_config(args.config)

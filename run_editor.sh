@@ -1,7 +1,7 @@
 #!/bin/bash
 echo ""
 echo "=========================================="
-echo " Template Editor - Avvio completo"
+echo " soPDF Editor - Avvio completo"
 echo "=========================================="
 echo ""
 

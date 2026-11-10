@@ -542,7 +542,7 @@ export default function TemplateEditor({ username, onLogout }) {
         {/* SIDEBAR */}
         <div style={css.sidebar}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <strong style={{ fontSize: 15 }}>Template Editor</strong>
+            <strong style={{ fontSize: 15 }}>soPDF Editor</strong>
             <button onClick={onLogout} style={{ ...css.btn4, fontSize: 11, padding: '4px 8px' }}>Esci</button>
           </div>
 

@@ -1,16 +1,16 @@
-# Split PDF per barcode
+# soPDF — Split PDF per barcode
 
 ## Scopo e avvio
 
-`split_pdf.py`, accanto a `main.py`, divide PDF multipagina in pagine singole.
+`soPDF.py`, accanto a `main.py`, divide PDF multipagina in pagine singole.
 Legge il barcode chiamando **la CLI esterna** di `main.py`, quindi rinomina e,
 se configurato, comprime le pagine riuscite. Non modifica il motore di estrazione.
 
 Da terminale, nella cartella del progetto:
 
 ```powershell
-python split_pdf.py
-python split_pdf.py -config split_config.jsonc
+python soPDF.py
+python soPDF.py -config soPDF_config.jsonc
 ```
 
 Una passata, poi esce. Nessun servizio o scheduler incorporato. Lo scheduling
@@ -46,7 +46,7 @@ Template, permessi AI e dipendenze del lettore restano gestiti da quel programma
 
 ## Configurazione con commenti inline
 
-File predefinito: `split_config.jsonc`, accanto all'utilità. Ogni impostazione
+File predefinito: `soPDF_config.jsonc`, accanto all'utilità. Ogni impostazione
 è spiegata sulla stessa riga con `//`. Ammessi anche commenti `/* ... */` e
 virgole finali. Stringhe, URL e backslash non vengono trattati come commenti.
 In stringhe JSON i backslash Windows devono essere doppi, oppure usare `/`.
@@ -62,15 +62,58 @@ Le cartelle dati devono essere distinte e non contenute l'una nell'altra.
 | Chiave in `paths` | Default | Contenuto |
 |---|---|---|
 | `in_pdf` | `in_pdf` | Originali da prendere in carico |
-| `out_pdf` | `out_pdf` | Pagine OK: `<barcode>.pdf`, poi `_1`, `_2`, ... |
-| `err_pdf` | `err_pdf` | `<jobId>/<origine>_p<N>.pdf`, pagine KO originali |
-| `worked_pdf` | `worked_pdf` | `<jobId>/<origine>.pdf`, sorgente elaborato |
+| `out_pdf` | `out_pdf` | `<barcode>.pdf` sovrascritto; con separazione attiva `<outputName>/<barcode>.pdf` + suffissi |
+| `err_pdf` | `err_pdf` | `<outputName>/<outputName>_p<N>.pdf`, pagine KO originali |
+| `worked_pdf` | `worked_pdf` | `<outputName>/<outputName>.pdf`, sorgente elaborato |
 | `tempDir` | `temp_split` | Job, pagine, JSON, stato di ripresa e lock |
 | `logDir` | `logs` | Log di testo |
 
 Le cartelle vengono create all'avvio. Non eliminare `temp_split` mentre lavora.
 Gli originali vengono archiviati anche se alcune pagine sono KO. Un PDF che non
-si può dividere va invece in `err_pdf/<jobId>/` intero.
+si può dividere va invece intero in `err_pdf/<outputName>/<outputName>.pdf`.
+
+`outputName` è sempre `<origine senza estensione>_ddmmyy`, con data locale di
+presa in carico. Per esempio `A.pdf` il 10/11/26 produce `A_101126`; i successivi
+omonimi producono `A_101126_1`, `A_101126_2`, ecc. L'11/11/26 si riparte da
+`A_111126`. Nessun carattere casuale. I nomi mantengono il case originale ma
+le collisioni sono confrontate senza distinzione maiuscole/minuscole anche su Linux.
+Il controllo riguarda tutte e tre le destinazioni e i nomi prenotati dai job.
+
+Il nome è riservato con una cartella in `worked_pdf` prima del pickup e salvato
+in `job.json`: una ripresa, anche il giorno dopo, non cambia nome. Una cartella
+di prenotazione vuota può restare dopo un errore: non viene riutilizzata né cancellata
+automaticamente. Le cartelle OK/KO vengono create solo quando servono.
+Gli ingressi sono fotografati prima di riprendere i job: anche i file arrivati
+durante la ripresa attendono la passata successiva.
+
+### Separazione degli OK e sovrascrittura
+
+`out_pdf_dir_separation` è un booleano al primo livello, **false per default**
+anche se assente dal config. Con `false`, gli OK vanno direttamente in `out_pdf`,
+senza creare sottocartelle. Se il nome esiste viene sostituito: **vince l'ultima
+pubblicazione**, anche fra pagine dello stesso PDF. Nessun suffisso `_1` sugli OK.
+Il confronto ignora maiuscole/minuscole e il nome finale conserva il case del
+nuovo barcode. La sovrascrittura è definitiva, senza backup dell'output precedente;
+gli originali sorgenti restano archiviati. Ogni sostituzione è segnalata con WARNING.
+
+Con `true` si mantiene il comportamento separato descritto nella tabella:
+cartella per sorgente e suffissi `_1`, `_2`, ecc. per i duplicati, senza sovrascrivere.
+`err_pdf` e `worked_pdf` mantengono sempre le sottocartelle e i suffissi protettivi;
+`onDuplicate` non si applica agli OK nella modalità piatta.
+
+La modalità si salva nel job alla presa in carico: cambiare config non cambia
+le destinazioni dei job già iniziati. I job della versione precedente con
+`outputName` ma senza modalità conservano le sottocartelle degli OK.
+Nella ripresa piatta un output completato con contenuto diverso è accettato
+(può essere stato sostituito da un'altra pagina); se manca resta un errore.
+Una pubblicazione interrotta può ripubblicare sopra un file più recente.
+Le vecchie sottocartelle e i file già presenti non vengono migrati o eliminati.
+
+I job preesistenti senza `outputName` completano tutto nel vecchio schema:
+OK nella radice `out_pdf`, KO in `err_pdf/<jobId>`, archivio in `worked_pdf/<jobId>`.
+Gli output già presenti non vengono spostati. In modalità separata barcode ripetuti nello stesso PDF
+usano `_1`, `_2`, ecc.; lo stesso barcode in PDF diversi rimane senza suffisso
+perché appartiene a sottocartelle diverse.
 
 ### Lettura e nomi
 
@@ -104,6 +147,10 @@ Un intero maggiore di 1 abilita un pool di thread, ognuno con un processo
 Gli originali sono sempre elaborati uno per volta. Le chiamate PDFium interne
 sono serializzate; gli estrattori esterni restano indipendenti. Con worker
 paralleli l'ordine di assegnazione dei suffissi ai barcode uguali non è garantito.
+In modalità piatta, più worker rendono non deterministico il vincitore fra pagine
+con barcode uguali: vince chi pubblica per ultimo, non l'ultima pagina numerica.
+Il programma avvisa nel log, senza modificare i worker configurati. Per ordine
+sequenziale impostare 0 o 1. I PDF sorgenti restano elaborati uno alla volta.
 
 ### Rotazione dopo mancata lettura
 
@@ -138,9 +185,12 @@ qualità può rendere il barcode dell'output meno leggibile: tarare su documenti
 Un errore di compressione conserva la pagina originale e scrive un WARN: non
 trasforma una lettura riuscita in KO. Le pagine KO e l'origine archiviata non
 vengono compresse. Nessuna promessa di riduzione: una scansione già ottimizzata
-potrebbe rimanere invariata. I PDF vengono pubblicati completi, senza sovrascrivere
-file esistenti. La pubblicazione usa hard link sul filesystem di output: occorre
-un filesystem che li supporti (verificare anche eventuali mount di rete).
+potrebbe rimanere invariata. I PDF vengono pubblicati completi: per gli OK piatti
+si usa una copia temporanea e `os.replace` nello stesso filesystem; nessun PDF
+parziale sostituisce il precedente. Per il cambio di case del nome possono servire
+due rinomine: in caso di interruzione la ripresa ripubblica dal file preparato.
+Le pubblicazioni senza sovrascrittura usano hard link sul filesystem di output:
+occorre un filesystem che li supporti (verificare anche eventuali mount di rete).
 
 ### Log
 
@@ -221,7 +271,7 @@ backup e non garantisce transazioni distribuite contro guasti disco/power loss.
 ## Verifiche
 
 ```powershell
-python -m unittest discover -s tests -p test_split_pdf.py -v
+python -m unittest discover -s tests -p test_soPDF.py -v
 ```
 
 Prima dell'uso reale sul QNAP provare un piccolo lotto e verificare leggibilità,

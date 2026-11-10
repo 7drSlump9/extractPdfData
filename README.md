@@ -1,18 +1,27 @@
-# extractPdfData
+# soPDF
 
 Estrattore dati ordini cliente da PDF e immagini basato su template JSON.
 
 ## Split PDF per barcode
 
-`python split_pdf.py` elabora una passata di `in_pdf`: divide le pagine, chiama
+`python soPDF.py` elabora una passata di `in_pdf`: divide le pagine, chiama
 `main.py` esternamente, rinomina col barcode e comprime le pagine OK in `out_pdf`.
 Originali e pagine KO sono separati per job, con ripresa dopo interruzione.
-Configurazione commentata inline: `split_config.jsonc`. Nessuna email inviata
+`out_pdf_dir_separation` è `false` per default: OK direttamente in `out_pdf`,
+senza sottocartelle; barcode uguali si **sovrascrivono**, anche nello stesso PDF.
+Con `true`, anche gli OK usano la sottocartella per sorgente come KO e archivio:
+`A_101126`, poi `A_101126_1`, `_2`, ecc. per omonimi nello stesso giorno.
+La data è sempre presente; nomi confrontati senza distinzione maiuscole/minuscole.
+Con `true`, barcode duplicati dentro un PDF conservano i suffissi `_1`, `_2`, ecc.
+Con `false` e più worker, vince l'ultima pubblicazione, non necessariamente l'ultima pagina:
+impostare `parallel.maxWorkers` a 0 o 1 per lavorazione sequenziale.
+Gli ingressi vengono fotografati prima della ripresa: nuovi arrivi attendono il cron successivo.
+Configurazione commentata inline: `soPDF_config.jsonc`. Nessuna email inviata
 in questa versione; log di testo con rotazione configurabile (default 10 MiB).
 `barcode.rotationOnFailureReading` è `true` per default: al primo fallimento
 ruota la pagina di 180° e ritenta una volta. Se legge, salva e comprime la pagina
 ruotata; altrimenti conserva la pagina non ruotata in `err_pdf`.
-Vedere il [manuale completo](docs/MANUALE_SPLIT.md) prima dell'uso.
+Vedere il [manuale completo](docs/MANUALE_soPDF.md) prima dell'uso.
 `barcode.validationRegex` nel config è `^[sS][0-9]{7}$`: s/S e sette cifre.
 Assente o vuota (anche solo spazi) disabilita il filtro regex; restano i controlli
 su valore mancante e `invalidValues`. Nessuna conversione maiuscolo/minuscolo.
@@ -280,7 +289,7 @@ Manuale completo: [docs/MANUALE_DECODE.md](docs/MANUALE_DECODE.md).
 
 ```bash
 # 1. Entra nel progetto
-cd extractPdfData
+cd soPDF
 
 # 2. Python
 ## Bootstrap AI — Generare template con OpenRouter
@@ -341,7 +350,9 @@ Condiviso tra backend e frontend:
 ## Struttura progetto
 
 ```
-extractPdfData/
+soPDF/
+├── soPDF.py                 Split PDF per barcode
+├── soPDF_config.jsonc       Configurazione soPDF
 ├── main.py                  CLI estrazione ordini
 ├── server.py                Flask API server
 ├── db.py                    Database layer (SQLAlchemy + SQLite)

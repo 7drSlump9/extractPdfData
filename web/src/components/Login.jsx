@@ -19,7 +19,7 @@ export default function Login({ onLogin }) {
 
   return (
     <div style={{ maxWidth: 400, margin: '100px auto', padding: 30, border: '1px solid #ccc', borderRadius: 8 }}>
-      <h2>Template Editor - Login</h2>
+      <h2>soPDF Editor - Login</h2>
       <form onSubmit={handleSubmit}>
         <div style={{ marginBottom: 10 }}>
           <label>Username</label>
