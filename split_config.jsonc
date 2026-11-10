@@ -18,7 +18,8 @@
   "barcode": {
     "jsonField": "barcode_top",        // Campo di primo livello da usare come nome file
     "validationRegex": ".+",           // Full match; .+ accetta stringhe non vuote su una riga
-    "invalidValues": ["N/A", ""]       // Valori considerati mancata lettura
+    "invalidValues": ["N/A", ""],      // Valori considerati mancata lettura
+    "rotationOnFailureReading": true   // Al primo fallimento ruota la pagina di 180° e rilegge una volta
   },
   "onDuplicate": "suffix_n",           // Duplicati: _1, _2, ...; mai sovrascrivere
   "minFileAgeSec": 5,                  // Intervallo di stabilità dimensione/data prima del pickup

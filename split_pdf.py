@@ -36,7 +36,8 @@ DEFAULTS = {
                   'template': 'barcode001', 'extraArgs': ['-no-ai-bootstrap'], 'timeoutSec': 120},
     'paths': {'in_pdf': 'in_pdf', 'out_pdf': 'out_pdf', 'err_pdf': 'err_pdf',
               'worked_pdf': 'worked_pdf', 'tempDir': 'temp_split', 'logDir': 'logs'},
-    'barcode': {'jsonField': 'barcode_top', 'validationRegex': '.+', 'invalidValues': ['N/A', '']},
+    'barcode': {'jsonField': 'barcode_top', 'validationRegex': '.+', 'invalidValues': ['N/A', ''],
+                'rotationOnFailureReading': True},
     'onDuplicate': 'suffix_n', 'minFileAgeSec': 5, 'lockStaleMin': 60, 'keepTemp': False,
     'parallel': {'maxWorkers': 1},
     'compression': {'enabled': True, 'engine': 'raster', 'dpi': 150, 'jpegQuality': 60,
@@ -392,6 +393,17 @@ def split_pages(source, folder):
     return count
 
 
+def rotate_page_180(source, target):
+    """Salva una copia con /Rotate relativo all'orientamento corrente, senza raster."""
+    with PDFIUM_LOCK, pdfium.PdfDocument(source) as document:
+        page = document[0]
+        try:
+            page.set_rotation((page.get_rotation() + 180) % 360)
+        finally:
+            page.close()
+        document.save(target)
+
+
 def compress_page(source, target, cfg, logger, context):
     """Restituisce source oppure target valido. Errori raster = fallback originale."""
     if not cfg['enabled']:
@@ -595,8 +607,25 @@ class Runner:
                 destination = job.publish(prepared, target.parent, record['stem'], record, self.logger)
                 self.logger.info('MOVE | %s | ripresa -> %s', context, destination)
                 return
+        rotated = False
         try:
-            stem = extract_barcode(source, source.with_suffix('.json'), self.cfg, self.logger, context)
+            try:
+                stem = extract_barcode(source, source.with_suffix('.json'), self.cfg, self.logger, context)
+            except PageError as first_error:
+                if not self.cfg['barcode']['rotationOnFailureReading']:
+                    raise
+                self.logger.warning('ROTATE | %s | prima lettura fallita: %s; riprova a 180°',
+                                    context, first_error)
+                rotated_source = source.with_suffix('.rot180.pdf')
+                rotate_page_180(source, rotated_source)
+                try:
+                    stem = extract_barcode(rotated_source, rotated_source.with_suffix('.json'),
+                                           self.cfg, self.logger, context)
+                except PageError as second_error:
+                    raise PageError(f'prima lettura: {first_error}; lettura a 180°: {second_error}') from second_error
+                source = rotated_source
+                rotated = True
+                self.logger.info('ROTATE | %s | barcode letto dopo rotazione di 180°', context)
         except PageError as exc:
             self.logger.error('EXTRACT | %s | %s', context, exc)
             kind, prepared = 'ko', source
@@ -609,7 +638,7 @@ class Runner:
                                      self.cfg['compression'], self.logger, context)
             directory = self.paths['out_pdf']
         with job.lock:
-            record.update(kind=kind, reason=reason, prepared=str(prepared), stem=stem,
+            record.update(kind=kind, reason=reason, prepared=str(prepared), stem=stem, rotated=rotated,
                           savedBytes=source.stat().st_size - prepared.stat().st_size)
             job.save()
         destination = job.publish(prepared, directory, stem, record, self.logger)

@@ -98,9 +98,24 @@ Gli originali sono sempre elaborati uno per volta. Le chiamate PDFium interne
 sono serializzate; gli estrattori esterni restano indipendenti. Con worker
 paralleli l'ordine di assegnazione dei suffissi ai barcode uguali non è garantito.
 
+### Rotazione dopo mancata lettura
+
+`barcode.rotationOnFailureReading=true` (anche se la voce manca) abilita un
+secondo e ultimo tentativo dopo qualunque errore del lettore, inclusi barcode
+assente, pagina bianca e timeout. `false` mantiene il singolo tentativo.
+La copia temporanea usa `/Rotate` di 180° rispetto all'orientamento corrente,
+senza modificare o rasterizzare il contenuto: la zona del template rimane la
+stessa, ma legge la parte opposta del foglio originale.
+
+Se il retry riesce, compressione e pubblicazione usano la pagina **ruotata**,
+anche se la compressione è disabilitata, saltata o fallisce. Se anche il retry
+fallisce, in `err_pdf` va la pagina non ruotata, con entrambi gli errori nel log.
+L'origine archiviata in `worked_pdf` rimane invariata. I log `ROTATE` tracciano
+il tentativo e l'eventuale successo. Ogni tentativo ha il proprio timeout.
+
 ### Compressione
 
-Solo pagine OK, **dopo la lettura sull'originale**. `compression.enabled` attiva
+Solo pagine OK, **dopo la lettura sulla pagina originale o ruotata**. `compression.enabled` attiva
 il motore `raster`: render PDFium, codifica PDF/JPEG Pillow. Non è uno ZIP.
 `dpi` (default 150), `jpegQuality` (60, intervallo 1–95) e `grayscale` controllano
 qualità e peso. Le dimensioni fisiche della pagina sono mantenute entro gli

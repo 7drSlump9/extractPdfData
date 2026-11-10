@@ -12,10 +12,10 @@ from reportlab.pdfgen import canvas
 # CONFIGURAZIONE
 # ==============================================================================
 INPUT_PDF = "originale.pdf"          # Nome del tuo file PDF originale
-OUTPUT_PDF = "modulo_1000_pagine.pdf"  # Nome del PDF finale
+OUTPUT_PDF = "modulo_100_pagine.pdf"  # Nome del PDF finale
 PREFIX = "S"
 START_NUM = 830                       # Pagina 1: S0000830
-NUM_PAGINE = 1000                      # Pagine totali
+NUM_PAGINE = 100                     # Pagine totali
 PAD_LENGTH = 7                        # 830 -> 0000830
 
 # ==============================================================================

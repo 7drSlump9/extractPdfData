@@ -73,8 +73,13 @@ class SplitTests(unittest.TestCase):
         for value in ({}, {'parallel': {'maxWorkers': None}}, {'parallel': {'maxWorkers': 0}}):
             path.write_text(json.dumps(value), encoding='utf-8')
             self.assertEqual(split.load_config(path)['parallel']['maxWorkers'], 1)
+            self.assertTrue(split.load_config(path)['barcode']['rotationOnFailureReading'])
+        path.write_text(json.dumps({'barcode': {'rotationOnFailureReading': False}}), encoding='utf-8')
+        self.assertFalse(split.load_config(path)['barcode']['rotationOnFailureReading'])
         for value in ({'extractor': {'timeoutSec': 'abc'}}, {'parallel': {'maxWorkers': True}},
                       {'log': {'maxSizeMB': -1}}, {'unknown': 1},
+                      {'barcode': {'rotationOnFailureReading': 'true'}},
+                      {'barcode': {'rotationOnFailureReading': 1}},
                       {'barcode': {'validationRegex': '['}}, {'paths': {'in_pdf': '.'}}):
             path.write_text(json.dumps(value), encoding='utf-8')
             with self.subTest(value=value), self.assertRaises(split.ConfigError):
@@ -145,7 +150,7 @@ class SplitTests(unittest.TestCase):
 
     def test_homonyms_separate_jobs_and_failed_pages(self):
         def fail_third(command, **kwargs):
-            if Path(command[-1]).stem == '3':
+            if Path(command[-1]).name.split('.')[0] == '3':
                 return subprocess.CompletedProcess(command, 1, 'barcode N/A', 'bad barcode')
             return self.reader(command, **kwargs)
         for _ in range(2):
@@ -184,6 +189,150 @@ class SplitTests(unittest.TestCase):
             with self.subTest(case=case), patch.object(split.subprocess, 'run', side_effect=reader):
                 with self.assertRaises(split.PageError):
                     split.extract_barcode(source, result, cfg, self.logger, 'test')
+
+    def test_rotation_disabled_does_not_retry(self):
+        self.cfg['barcode']['rotationOnFailureReading'] = False
+        self.input(count=1)
+        with patch.object(split, 'extract_barcode', side_effect=split.PageError('empty')) as reader, \
+                patch.object(split, 'rotate_page_180') as rotate:
+            self.assertEqual(self.runner.run(), 1)
+        self.assertEqual(reader.call_count, 1)
+        rotate.assert_not_called()
+        self.assertEqual(len(list(self.runner.paths['err_pdf'].glob('*/*.pdf'))), 1)
+
+    def test_first_read_success_does_not_rotate(self):
+        self.input(count=1)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader) as reader, \
+                patch.object(split, 'rotate_page_180') as rotate:
+            self.assertEqual(self.runner.run(), 0)
+        self.assertEqual(reader.call_count, 1)
+        rotate.assert_not_called()
+
+    def test_rotated_success_is_saved_and_compressed_from_rotated_page(self):
+        self.input(count=1)
+        self.cfg['keepTemp'] = True
+        with patch.object(split, 'extract_barcode', side_effect=[split.PageError('empty'), 'CODE']) as reader, \
+                patch.object(split, 'compress_page', side_effect=lambda source, *args: source) as compress:
+            self.assertEqual(self.runner.run(), 0)
+        first, second = reader.call_args_list
+        self.assertEqual(first.args[0].name, '1.pdf')
+        self.assertEqual(second.args[0].name, '1.rot180.pdf')
+        self.assertEqual(second.args[1].name, '1.rot180.json')
+        self.assertEqual(compress.call_args.args[0], second.args[0])
+        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / 'CODE.pdf') as document:
+            page = document[0]
+            self.assertEqual(page.get_rotation(), 180)
+            page.close()
+        with pdfium.PdfDocument(next(self.runner.paths['worked_pdf'].glob('*/a.pdf'))) as document:
+            page = document[0]
+            self.assertEqual(page.get_rotation(), 0)
+            page.close()
+        folder = next(self.runner.paths['tempDir'].iterdir())
+        record = json.loads((folder / 'job.json').read_text())['pages']['1']
+        self.assertTrue(record['rotated'])
+        self.assertEqual(record['savedBytes'], 0)
+
+    def test_two_failures_keep_original_and_both_reasons(self):
+        self.input(count=1)
+        self.cfg['keepTemp'] = True
+        with patch.object(split, 'extract_barcode', side_effect=[split.PageError('first'), split.PageError('second')]) as reader:
+            self.assertEqual(self.runner.run(), 1)
+        self.assertEqual(reader.call_count, 2)
+        destination = next(self.runner.paths['err_pdf'].glob('*/*.pdf'))
+        with pdfium.PdfDocument(destination) as document:
+            page = document[0]
+            self.assertEqual(page.get_rotation(), 0)
+            page.close()
+        folder = next(self.runner.paths['tempDir'].iterdir())
+        record = json.loads((folder / 'job.json').read_text())['pages']['1']
+        self.assertIn('first', record['reason'])
+        self.assertIn('second', record['reason'])
+        self.assertFalse(record['rotated'])
+        self.assertEqual(destination.read_bytes(), (folder / 'pages' / '1.pdf').read_bytes())
+
+    def test_timeout_retries_once(self):
+        self.input(count=1)
+        with patch.object(split.subprocess, 'run', side_effect=[subprocess.TimeoutExpired('reader', 1),
+                                                              subprocess.CompletedProcess([], 1, '', '')]) as reader:
+            self.assertEqual(self.runner.run(), 1)
+        self.assertEqual(reader.call_count, 2)
+        self.assertEqual(Path(reader.call_args_list[1].args[0][-1]).name, '1.rot180.pdf')
+
+    def test_rotation_failure_preserves_job_for_resume(self):
+        self.input(count=1)
+        with patch.object(split, 'extract_barcode', side_effect=split.PageError('empty')), \
+                patch.object(split, 'rotate_page_180', side_effect=OSError('disk full')):
+            self.assertEqual(self.runner.run(), 1)
+        self.assertEqual(len(list(self.runner.paths['tempDir'].glob('*/a.pdf'))), 1)
+        self.assertEqual(list(self.runner.paths['err_pdf'].glob('*/*.pdf')), [])
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.assertEqual(self.runner.run(), 0)
+
+    def test_rotated_publish_resume_does_not_read_or_rotate_again(self):
+        self.input(count=1)
+        with patch.object(split, 'extract_barcode', side_effect=[split.PageError('empty'), 'CODE']), \
+                patch.object(split.os, 'link', side_effect=OSError('disk full')):
+            self.assertEqual(self.runner.run(), 1)
+        with patch.object(split, 'extract_barcode') as reader, patch.object(split, 'rotate_page_180') as rotate:
+            self.assertEqual(self.runner.run(), 0)
+        reader.assert_not_called()
+        rotate.assert_not_called()
+        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / 'CODE.pdf') as document:
+            page = document[0]
+            self.assertEqual(page.get_rotation(), 180)
+            page.close()
+        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*.pdf'))), 1)
+
+    def test_rotate_page_relative_to_existing_rotation(self):
+        source = self.root / 'source.pdf'
+        target = self.root / 'rotated.pdf'
+        for rotation in (0, 90, 180, 270):
+            with self.subTest(rotation=rotation):
+                with pdfium.PdfDocument.new() as document:
+                    page = document.new_page(600, 800)
+                    page.set_rotation(rotation)
+                    page.close()
+                    document.save(source)
+                split.rotate_page_180(source, target)
+                with pdfium.PdfDocument(target) as document:
+                    page = document[0]
+                    self.assertEqual(page.get_rotation(), (rotation + 180) % 360)
+                    page.close()
+
+    def test_real_barcode_render_respects_rotate(self):
+        import pdfplumber
+        from barcode_reader import barcode_zone
+        from template_engine import render_template_pages
+        from test_barcode import fixture
+        import template_store
+
+        source = self.runner.paths['in_pdf'] / 'upside_down.pdf'
+        # Upright barcode at top right; scan arrives upside down, at bottom left.
+        with Image.new('L', (1200, 1600), 255) as upright, fixture() as code:
+            upright.paste(code, (450, 40))
+            with upright.transpose(Image.Transpose.ROTATE_180) as upside_down:
+                upside_down.save(source, 'PDF', resolution=72, quality=95)
+        template = {'header': {'fields': {'code': {'type': 'barcode', 'page': 1}}}}
+        settings = copy.deepcopy(template_store.DEFAULTS)
+        settings['barcode'].update(renderDpi=72, tryRotations=False)
+
+        def render_read(command, **kwargs):
+            with pdfplumber.open(command[-1]) as document:
+                image = render_template_pages(document, template)[0][0]
+                try:
+                    value = barcode_zone(image, 450, 40, 720, 160,
+                                         config=settings['barcode'])['value']
+                finally:
+                    image.close()
+            result = Path(command[command.index('-outputTemplatePath') + 1])
+            result.write_text(json.dumps({'barcode_top': value}), encoding='utf-8')
+            return subprocess.CompletedProcess(command, 0, '', '')
+
+        with patch.object(template_store, 'load_config', return_value=settings), \
+                patch.object(split.subprocess, 'run', side_effect=render_read) as reader:
+            self.assertEqual(self.runner.run(), 0)
+        self.assertEqual(reader.call_count, 2)
+        self.assertTrue((self.runner.paths['out_pdf'] / 'ABC123.pdf').is_file())
 
     def test_corrupt_pdf_archived_in_error(self):
         (self.runner.paths['in_pdf'] / 'bad.pdf').write_bytes(b'not a PDF')
