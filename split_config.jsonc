@@ -17,7 +17,7 @@
   },
   "barcode": {
     "jsonField": "barcode_top",        // Campo di primo livello da usare come nome file
-    "validationRegex": ".+",           // Full match; .+ accetta stringhe non vuote su una riga
+    "validationRegex": "^[sS][0-9]{7}$", // s/S + 7 cifre; solo S: ^S[0-9]{7}$; vuoto/assente = nessun filtro regex
     "invalidValues": ["N/A", ""],      // Valori considerati mancata lettura
     "rotationOnFailureReading": true   // Al primo fallimento ruota la pagina di 180° e rilegge una volta
   },

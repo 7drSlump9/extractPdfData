@@ -84,8 +84,15 @@ python main.py -customer UNKNOWN -template barcode001 -no-ai-bootstrap -outputTe
 KO significa: exit code non zero, timeout, JSON mancante/corrotto, campo assente,
 barcode non stringa/vuoto, valore in `invalidValues` o regex non rispettata.
 `barcode.jsonField` è un campo di primo livello del JSON (default `barcode_top`).
-`validationRegex` si applica all'intero valore; `.+` accetta ogni stringa non vuota
-su una riga. Il valore viene privato degli spazi esterni. I caratteri non validi
+`validationRegex` si applica all'intero valore e distingue maiuscole/minuscole.
+Assente o vuota (anche solo spazi) disabilita il filtro regex: qualunque valore
+letto è ammesso, salvo valore mancante/vuoto e quelli in `invalidValues` (es. `N/A`).
+Il config distribuito usa `^[sS][0-9]{7}$`: accetta `S0000957` e `s0001087`.
+Per accettare solo maiuscole usare `^S[0-9]{7}$`, solo minuscole `^s[0-9]{7}$`.
+La regola non è imposta dal codice; il default senza voce è nessun filtro regex.
+Nessuna conversione: `s0001087` conserva la minuscola anche nel nome file.
+Una mancata corrispondenza attiva il retry ruotato se abilitato, poi l'eventuale KO.
+Il valore viene privato degli spazi esterni. I caratteri non validi
 nei nomi Windows sono sostituiti da `_`; nomi riservati e lunghezze eccessive
 vengono resi sicuri. Questo può produrre collisioni: si applica il suffisso `_n`.
 

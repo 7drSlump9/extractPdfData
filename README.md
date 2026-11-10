@@ -13,6 +13,9 @@ in questa versione; log di testo con rotazione configurabile (default 10 MiB).
 ruota la pagina di 180° e ritenta una volta. Se legge, salva e comprime la pagina
 ruotata; altrimenti conserva la pagina non ruotata in `err_pdf`.
 Vedere il [manuale completo](docs/MANUALE_SPLIT.md) prima dell'uso.
+`barcode.validationRegex` nel config è `^[sS][0-9]{7}$`: s/S e sette cifre.
+Assente o vuota (anche solo spazi) disabilita il filtro regex; restano i controlli
+su valore mancante e `invalidValues`. Nessuna conversione maiuscolo/minuscolo.
 
 Due programmi, un unico motore condiviso.
 

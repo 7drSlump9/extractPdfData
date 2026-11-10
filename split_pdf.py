@@ -36,7 +36,7 @@ DEFAULTS = {
                   'template': 'barcode001', 'extraArgs': ['-no-ai-bootstrap'], 'timeoutSec': 120},
     'paths': {'in_pdf': 'in_pdf', 'out_pdf': 'out_pdf', 'err_pdf': 'err_pdf',
               'worked_pdf': 'worked_pdf', 'tempDir': 'temp_split', 'logDir': 'logs'},
-    'barcode': {'jsonField': 'barcode_top', 'validationRegex': '.+', 'invalidValues': ['N/A', ''],
+    'barcode': {'jsonField': 'barcode_top', 'validationRegex': '', 'invalidValues': ['N/A', ''],
                 'rotationOnFailureReading': True},
     'onDuplicate': 'suffix_n', 'minFileAgeSec': 5, 'lockStaleMin': 60, 'keepTemp': False,
     'parallel': {'maxWorkers': 1},
@@ -174,10 +174,11 @@ def load_config(path):
     for key in ('customer', 'template'):
         if not cfg['extractor'][key].strip():
             raise ConfigError(f'extractor.{key}: obbligatorio')
-    if not cfg['barcode']['jsonField'] or not cfg['barcode']['validationRegex']:
-        raise ConfigError('barcode.jsonField e validationRegex non possono essere vuoti')
+    if not cfg['barcode']['jsonField']:
+        raise ConfigError('barcode.jsonField non può essere vuoto')
     try:
-        re.compile(cfg['barcode']['validationRegex'])
+        if cfg['barcode']['validationRegex'].strip():
+            re.compile(cfg['barcode']['validationRegex'])
     except re.error as exc:
         raise ConfigError(f'barcode.validationRegex: {exc}') from exc
     # Blocca flag che potrebbero alterare l'interfaccia e le destinazioni gestite.
@@ -488,7 +489,8 @@ def extract_barcode(source, result_path, cfg, logger, context):
         value = value.strip()
         if not value or value in cfg['barcode']['invalidValues']:
             raise ValueError(f'barcode non valido: {value!r}')
-        if re.fullmatch(cfg['barcode']['validationRegex'], value) is None:
+        pattern = cfg['barcode'].get('validationRegex', '')
+        if pattern.strip() and re.fullmatch(pattern, value) is None:
             raise ValueError(f'barcode non conforme alla regex: {value!r}')
         name = safe_stem(value)
     except (OSError, ValueError) as exc:

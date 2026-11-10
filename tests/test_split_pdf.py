@@ -190,6 +190,96 @@ class SplitTests(unittest.TestCase):
                 with self.assertRaises(split.PageError):
                     split.extract_barcode(source, result, cfg, self.logger, 'test')
 
+    def test_optional_validation_regex_config(self):
+        path = self.root / 'config.jsonc'
+        for barcode in ({}, {'validationRegex': ''}, {'validationRegex': '   '}):
+            with self.subTest(barcode=barcode):
+                path.write_text(json.dumps({'barcode': barcode}), encoding='utf-8')
+                self.assertFalse(split.load_config(path)['barcode']['validationRegex'].strip())
+        supplied = split.load_config(split.ROOT / 'split_config.jsonc')
+        self.assertEqual(supplied['barcode']['validationRegex'], '^[sS][0-9]{7}$')
+
+    def test_validation_regex_values_and_case(self):
+        source = self.input(count=1)
+        result = self.root / 'result.json'
+        cases = [
+            ('^[sS][0-9]{7}$', 'S0000957', True),
+            ('^[sS][0-9]{7}$', 's0001087', True),
+            ('^S[0-9]{7}$', 's0001087', False),
+            ('^s[0-9]{7}$', 'S0000957', False),
+            ('^s[0-9]{7}$', 's0001087', True),
+        ]
+        cases.extend(('^[sS][0-9]{7}$', value, False)
+                     for value in ('X123', 'S123', 'S00009570', 'S000095A', 'S００００９５７'))
+        cases.extend((pattern, value, True) for pattern in ('', '   ', None)
+                     for value in ('X123', 'abc', 'S0000957', 'abc\ndef'))
+        cases.extend((pattern, value, False) for pattern in ('', '   ', None)
+                     for value in ('N/A', '', None, 123))
+        for pattern, value, accepted in cases:
+            with self.subTest(pattern=pattern, value=value):
+                cfg = copy.deepcopy(self.cfg)
+                if pattern is None:
+                    del cfg['barcode']['validationRegex']
+                else:
+                    cfg['barcode']['validationRegex'] = pattern
+
+                def reader(command, **kwargs):
+                    result.write_text(json.dumps({'barcode_top': value}), encoding='utf-8')
+                    return subprocess.CompletedProcess(command, 0, '', '')
+
+                with patch.object(split.subprocess, 'run', side_effect=reader):
+                    if accepted:
+                        self.assertEqual(split.extract_barcode(source, result, cfg, self.logger, 'test'),
+                                         split.safe_stem(value))
+                    else:
+                        with self.assertRaises(split.PageError):
+                            split.extract_barcode(source, result, cfg, self.logger, 'test')
+
+    def test_regex_failure_retries_then_ko(self):
+        self.cfg['barcode']['validationRegex'] = '^[sS][0-9]{7}$'
+        for number, value in enumerate(('X123', 'S123', 'S00009570', 'S000095A')):
+            self.input(f'bad{number}.pdf', count=1)
+
+            def reader(command, **kwargs):
+                result = Path(command[command.index('-outputTemplatePath') + 1])
+                result.write_text(json.dumps({'barcode_top': value}), encoding='utf-8')
+                return subprocess.CompletedProcess(command, 0, '', '')
+
+            with self.subTest(value=value), patch.object(split.subprocess, 'run', side_effect=reader) as mock:
+                self.assertEqual(self.runner.run(), 1)
+                self.assertEqual(mock.call_count, 2)
+                self.assertEqual(Path(mock.call_args_list[1].args[0][-1]).name, '1.rot180.pdf')
+        self.assertEqual(len(list(self.runner.paths['err_pdf'].glob('*/*.pdf'))), 4)
+        self.assertEqual(list(self.runner.paths['out_pdf'].glob('*.pdf')), [])
+
+    def test_regex_valid_values_keep_filename_case(self):
+        self.cfg['barcode']['validationRegex'] = '^[sS][0-9]{7}$'
+        for number, value in enumerate(('S0000957', 's0001087')):
+            self.input(f'valid{number}.pdf', count=1)
+
+            def reader(command, **kwargs):
+                result = Path(command[command.index('-outputTemplatePath') + 1])
+                result.write_text(json.dumps({'barcode_top': value}), encoding='utf-8')
+                return subprocess.CompletedProcess(command, 0, '', '')
+
+            with patch.object(split.subprocess, 'run', side_effect=reader) as mock:
+                self.assertEqual(self.runner.run(), 0)
+                self.assertEqual(mock.call_count, 1)
+        self.assertEqual(sorted(p.name for p in self.runner.paths['out_pdf'].glob('*.pdf')),
+                         ['S0000957.pdf', 's0001087.pdf'])
+
+    def test_na_still_retries_without_regex(self):
+        self.input(count=1)
+
+        def reader(command, **kwargs):
+            result = Path(command[command.index('-outputTemplatePath') + 1])
+            result.write_text(json.dumps({'barcode_top': 'N/A'}), encoding='utf-8')
+            return subprocess.CompletedProcess(command, 0, '', '')
+
+        with patch.object(split.subprocess, 'run', side_effect=reader) as mock:
+            self.assertEqual(self.runner.run(), 1)
+            self.assertEqual(mock.call_count, 2)
+
     def test_rotation_disabled_does_not_retry(self):
         self.cfg['barcode']['rotationOnFailureReading'] = False
         self.input(count=1)
