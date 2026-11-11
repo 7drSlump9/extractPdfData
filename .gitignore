@@ -21,3 +21,5 @@ worked_pdf/
 temp_split/
 logs/
 reports/
+*.pdf
+*.PDF
