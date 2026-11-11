@@ -51,7 +51,7 @@
     "sendOn": "always",                // always | error | never; niente invio per passata vuota
     "apiKeyEnvVar": "BREV_API_KEY",     // Nome effettivo nel tuo .env; default codice BREVO_API_KEY
     "from": {"name": "soPDF", "email": "consegne@sogesispa.it"},
-    "to": ["d.cimarelli@keyfor.it", "f.ortolani@keyfor.it"],     // Destinatari configurabili
+    "to": ["d.cimarelli@keyfor.it"],     // Destinatari configurabili
     "templateFile": "soPDF_email.jsonc", // Oggetto e corpo; percorso relativo al progetto
     "timeoutSec": 30,
     "retryDays": 7                     // Recupero riepiloghi falliti in un'unica email
