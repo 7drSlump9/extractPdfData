@@ -1,6 +1,7 @@
 pdfplumber
 pypdfium2
 requests
+paramiko
 Pillow
 pytesseract
 sqlalchemy

@@ -92,6 +92,35 @@ class SplitTests(unittest.TestCase):
                 split.load_config(path)
         self.assertEqual(split.load_config(split.ROOT / 'soPDF_config.jsonc')['log']['maxSizeMB'], 10)
 
+    def test_atomic_json_retries_transient_permission_error(self):
+        path = self.root / 'state.json'
+        split.atomic_json(path, {'old': True})
+        replace = split.os.replace
+
+        def flaky_replace(src, dst):
+            if mocked.call_count < 3:
+                raise PermissionError('locked')
+            return replace(src, dst)
+
+        with patch.object(split.os, 'replace', side_effect=flaky_replace) as mocked, \
+                patch.object(split.time, 'sleep') as sleep:
+            split.atomic_json(path, {'new': True})
+        self.assertEqual(mocked.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(json.loads(path.read_text()), {'new': True})
+        self.assertFalse(path.with_suffix('.pending').exists())
+
+    def test_atomic_json_persistent_permission_error_preserves_old_state(self):
+        path = self.root / 'state.json'
+        split.atomic_json(path, {'old': True})
+        with patch.object(split.os, 'replace', side_effect=PermissionError('locked')) as replace, \
+                patch.object(split.time, 'sleep') as sleep:
+            with self.assertRaises(PermissionError):
+                split.atomic_json(path, {'new': True})
+        self.assertEqual(replace.call_count, 10)
+        self.assertEqual(sleep.call_count, 9)
+        self.assertEqual(json.loads(path.read_text()), {'old': True})
+
     def test_split_dimensions(self):
         source = self.input()
         folder = self.root / 'pages'

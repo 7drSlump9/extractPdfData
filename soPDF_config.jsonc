@@ -28,7 +28,7 @@
   "lockStaleMin": 60,                  // Recupera lock vecchi solo se PID locale non più vivo
   "keepTemp": false,                   // true conserva anche i job completati per debug
   "parallel": {
-    "maxWorkers": 1                    // Mancante/null/0/1 = sequenziale; >1 = thread + subprocess
+    "maxWorkers": 8                    // Mancante/null/0/1 = sequenziale; >1 = thread + subprocess
   },
   "compression": {                     // Solo dopo lettura OK; originali e KO restano invariati
     "enabled": true,                   // false salta la compressione
@@ -46,10 +46,27 @@
     "backupCount": 5,                  // Storico .1, .2...; 0 tronca senza tenere storico
     "level": "INFO"                    // DEBUG, INFO, WARN, WARNING o ERROR
   },
+  "transfer": {                        // SFTP su SSH (non protocollo SCP legacy); solo out_pdf
+    "enabled": true,                  // Attivare dopo aver impostato host e remoteDir
+    "host": "212.39.9.70",                        // Host SSH o alias in ~/.ssh/config
+    "port": 22,
+    "user": "keyfor",                        // Vuoto = User da ~/.ssh/config, poi utente locale
+    "remoteDir": "/tmp/test",                   // Directory remota assoluta POSIX, es. /data/incoming
+    "passwordEnvVar": "SOPDF_SCP_PASSWORD", // Solo test: env/.env; assente = chiavi/agent
+    "identityFile": "",                // Privata, es. ~/.ssh/id_ed25519; vuoto = chiavi standard
+    "knownHostsFile": "",              // Vuoto = known_hosts standard; host sconosciuto rifiutato
+    "timeoutSec": 30,
+    "retries": 3,                      // Tentativi per file nella stessa passata
+    "notify": {
+      "enabled": true,                 // Email separata dei file non spostati via Brevo
+      "to": ["d.cimarelli@keyfor.it","f.ortolan@keyfor.it"],                        // Vuoto = destinatari email.to
+      "reminderHours": 24              // Stesso elenco: promemoria dopo queste ore
+    }
+  },
   "email": {                           // API Brevo HTTPS; nessun allegato
     "enabled": true,                   // false mantiene solo i report locali
     "sendOn": "always",                // always | error | never; niente invio per passata vuota
-    "apiKeyEnvVar": "BREV_API_KEY",     // Nome effettivo nel tuo .env; default codice BREVO_API_KEY
+    "apiKeyEnvVar": "BREVO_API_KEY",    // Nome della variabile in ambiente o nel file .env
     "from": {"name": "soPDF", "email": "consegne@sogesispa.it"},
     "to": ["d.cimarelli@keyfor.it"],     // Destinatari configurabili
     "templateFile": "soPDF_email.jsonc", // Oggetto e corpo; percorso relativo al progetto

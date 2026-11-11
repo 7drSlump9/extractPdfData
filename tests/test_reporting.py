@@ -53,6 +53,20 @@ class ReportingTests(unittest.TestCase):
         self.assertIn('&lt;non letto&gt;', sender.call_args.args[1]['htmlContent'])
         self.assertEqual(len(list(report.folder.glob('*.json'))), 1)
 
+    def test_known_email_failure_details_logged_without_report_changes(self):
+        for message in ('Variabile API Brevo assente o vuota', 'Brevo HTTP 401',
+                        'Invio Brevo non confermato (TimeoutError)'):
+            with self.subTest(message=message):
+                report = self.run_report()
+                report.record(self.entry())
+                with patch.object(reporting, 'send_brevo', side_effect=RuntimeError(message)), \
+                        self.assertLogs(self.logger, logging.WARNING) as logs:
+                    report.finish()
+                self.assertIn(message, '\n'.join(logs.output))
+                stored = json.loads(report.path.read_text(encoding='utf-8'))
+                self.assertEqual(stored['email']['status'], 'failed')
+                self.assertEqual(stored['email']['error'], 'RuntimeError')
+
     def test_empty_run_no_report_no_email(self):
         report = self.run_report()
         with patch.object(reporting, 'send_brevo') as sender:

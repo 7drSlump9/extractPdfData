@@ -327,10 +327,76 @@ cancellazione, ripresa o errore di uscita: richiede verifica manuale.
 La ripresa limita i duplicati dopo un arresto del processo; non sostituisce un
 backup e non garantisce transazioni distribuite contro guasti disco/power loss.
 
+## Trasferimento degli OK su SSH
+
+La sezione `transfer` abilita l'invio a **un solo endpoint**. Il trasporto è
+**SFTP su SSH tramite paramiko**, non il protocollo SCP legacy: il server deve
+avere SFTP abilitato e supportare `posix-rename@openssh.com` (OpenSSH lo supporta).
+Installazione: `python -m pip install paramiko`, oppure usare `requirements.txt`.
+
+Impostare `enabled=true`, `host`, `port` e `remoteDir` (directory POSIX assoluta).
+L'invio avviene a fine passata, sotto lo stesso lock dello split, anche senza nuovi
+PDF: ritenta quindi gli OK rimasti da passate precedenti. Viene toccato **solo
+out_pdf**. KO e originali archiviati non vengono inviati né cancellati.
+I file nella radice arrivano direttamente in `remoteDir`; le sottocartelle vengono
+replicate e unite alle eventuali cartelle remote. I file già presenti vengono
+**sempre sovrascritti**; quelli presenti solo sul server restano invariati.
+Tutti i file regolari presenti in `out_pdf` vengono trasferiti, anche se restano
+job incompleti o stati illeggibili in `temp_split`. I link simbolici sono esclusi.
+
+Ogni file viene caricato in un nome temporaneo casuale `.sopdf-*.part`, controllato
+per dimensione, poi pubblicato con rinomina atomica che sostituisce il precedente.
+Solo dopo il successo si cancella il file locale. Le directory locali vuote vengono
+rimosse. Il controllo dimensione non è una verifica crittografica remota; SSH protegge
+il trasporto. Non modificare gli output durante l'invio. Una directory non è una
+transazione unica: i file riusciti sono rimossi, quelli falliti restano locali.
+Directory completamente vuote non vengono replicate. Un arresto può lasciare `.part`
+sul server: verificarli manualmente prima di eliminarli.
+Se il server non supporta la rinomina atomica, l'invio fallisce senza eliminare
+il vecchio file remoto. Nessun fallback distruttivo `remove + rename`.
+
+### Password di test e chiavi in produzione
+
+Per il test, impostare in `.env` (ignorato da Git):
+
+```dotenv
+SOPDF_SCP_PASSWORD=password-di-test
+```
+
+La variabile d'ambiente del processo ha precedenza su `.env`. In produzione
+**rimuovere la password da entrambi**: automaticamente usa `identityFile`, oppure
+ssh-agent e chiavi standard. `identityFile` e `knownHostsFile` accettano `~`;
+altri percorsi relativi sono riferiti alla cartella del programma.
+`user` vuoto usa `User` da `~/.ssh/config`, altrimenti l'utente locale.
+Sono supportati `HostName`, `User` e `IdentityFile` della configurazione SSH;
+proxy/jump host e altre direttive non sono gestiti. La porta viene sempre dal JSONC.
+Una chiave privata cifrata deve essere già caricata nell'agent: nessun prompt.
+
+Le chiavi host sconosciute o cambiate sono **rifiutate**. Prima dell'invio collegarsi
+con OpenSSH, verificare l'impronta del server con l'amministratore e registrarla
+in `~/.ssh/known_hosts`, oppure fornire un file verificato in `knownHostsFile`.
+
+### File non spostati ed email
+
+Errori di connessione, upload, rinomina o cancellazione locale mantengono i file
+locali e producono exit code **1**. Alla passata successiva vengono ritentati.
+Se la cancellazione locale fallisce dopo la pubblicazione remota, il retry
+sovrascriverà nuovamente lo stesso file remoto.
+
+`transfer.notify.enabled=true` invia una **email separata via Brevo** con l'elenco
+completo dei file non spostati e motivi sintetici, senza credenziali. Usa mittente,
+API key e timeout della sezione `email`; `notify.to=[]` usa `email.to`.
+Questa notifica è indipendente da `email.enabled` e `email.sendOn`.
+Lo stato è salvato in `reports/transfer_state.json`: stesso elenco notificato
+solo dopo `reminderHours`, nuovo elenco subito, invio email fallito ritentato alla
+prossima passata. Servono API key Brevo e destinatari validi anche per il test.
+Il normale riepilogo delle lavorazioni resta separato.
+
 ## Verifiche
 
 ```powershell
 python -m unittest discover -s tests -p test_soPDF.py -v
+python -m unittest discover -s tests -p test_transfer.py -v
 ```
 
 Prima dell'uso reale sul QNAP provare un piccolo lotto e verificare leggibilità,

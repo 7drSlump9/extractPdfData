@@ -342,8 +342,14 @@ class RunReport:
         try:
             message_id = send_brevo(self.settings, rendered, self.root)
         except Exception as exc:
-            # Non loggare str(exc): anche un errore inatteso potrebbe contenere la chiave.
-            self.logger.warning('EMAIL | invio non confermato (%s); report conservati per retry', type(exc).__name__)
+            # Mostra solo diagnostica nota: errori inattesi possono contenere segreti.
+            detail = type(exc).__name__
+            if type(exc) is RuntimeError and re.fullmatch(
+                    r'Variabile API Brevo assente o vuota|Brevo HTTP [1-5][0-9]{2}|'
+                    r'Invio Brevo non confermato \((?:URLError|TimeoutError|'
+                    r'ConnectionError|OSError|JSONDecodeError|RuntimeError)\)', str(exc)):
+                detail += ': ' + str(exc)
+            self.logger.warning('EMAIL | invio non confermato (%s); report conservati per retry', detail)
             email_result = {'status': 'failed', 'error': type(exc).__name__}
         else:
             self.logger.info('EMAIL | riepilogo accettato da Brevo | messageId=%s', message_id)

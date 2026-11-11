@@ -28,11 +28,13 @@ import uuid
 
 import pypdfium2 as pdfium
 import soPDF_reporting as reporting
+import soPDF_transfer as transfer
 
 
 ROOT = Path(__file__).resolve().parent
 PDFIUM_LOCK = threading.RLock()
 DEFAULTS = {
+    'transfer': transfer.DEFAULTS,
     'extractor': {'python': '', 'mainPy': '', 'customer': 'UNKNOWN',
                   'template': 'barcode001', 'extraArgs': ['-no-ai-bootstrap'], 'timeoutSec': 120},
     'paths': {'in_pdf': 'in_pdf', 'out_pdf': 'out_pdf', 'err_pdf': 'err_pdf',
@@ -148,6 +150,10 @@ def load_config(path):
         return result
 
     cfg = merge(DEFAULTS, supplied)
+    try:
+        transfer.validate(cfg['transfer'])
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
     def number(section, key, minimum, maximum=None, integer=False):
         value = cfg[section][key] if section else cfg[key]
@@ -249,7 +255,14 @@ def atomic_json(path, data):
         json.dump(data, stream, ensure_ascii=False, indent=2)
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(pending, path)
+    for attempt in range(10):
+        try:
+            os.replace(pending, path)
+            break
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def sha256(path):
@@ -911,6 +924,11 @@ class Runner:
                     self.record_pdf(stub, error='Presa in carico fallita; verificare log e file sorgente')
                 self.logger.exception('JOB | file=%s | errore infrastrutturale; conservato per ripresa', source.name)
         self.logger.info('SUMMARY | %s', self.totals)
+        try:
+            errors = transfer.run(self.cfg['transfer'], self.paths, self.cfg['email'], ROOT, self.logger) or errors
+        except Exception as exc:
+            errors = True
+            self.logger.warning('TRANSFER | interrotto, file locali conservati (%s)', type(exc).__name__)
         try:
             self.report.finish()
         except Exception as exc:
