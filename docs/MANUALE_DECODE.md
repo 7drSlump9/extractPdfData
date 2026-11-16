@@ -1,5 +1,25 @@
 # Estrazione generale e zone barcode Code128
 
+[README](../README.md) · [Manuale split soPDF](MANUALE_soPDF.md)
+
+## Indice
+
+- [Scopo](#scopo)
+- [Avvio rapido e verifica](#avvio-rapido-e-verifica)
+- [Template: file prima, database dopo](#template-file-prima-database-dopo)
+- [Creare il riquadro barcode](#creare-il-riquadro-barcode)
+- [Configurazione generale e permesso AI](#configurazione-generale-e-permesso-ai)
+- [Uso da linea di comando](#uso-da-linea-di-comando)
+- [Percorso PDF e compatibilità](#percorso-pdf-e-compatibilità)
+- [Limiti del decoder attuale](#limiti-del-decoder-attuale)
+- [Problemi comuni](#problemi-comuni)
+- [Checklist prima di integrare](#checklist-prima-di-integrare)
+- [Verifica tecnica](#verifica-tecnica)
+
+> **Due programmi, due risultati:** `main.py` estrae dati in JSON; `soPDF.py`
+> usa quel lettore per dividere e rinominare PDF. I rispettivi codici di uscita
+> e file di configurazione non sono intercambiabili.
+
 ## Scopo
 
 Il programma resta un estrattore generale basato su template: **header, table,
@@ -9,6 +29,32 @@ e tabella. Un template può anche avere soltanto un header con un barcode.
 
 Il tuo programma esterno passa i documenti a `main.py`. L'editor web serve a
 preparare e verificare i template, non deve essere aperto durante l'estrazione CLI.
+
+## Avvio rapido e verifica
+
+1. Preparare l'ambiente seguendo i [prerequisiti del README](../README.md#prerequisiti).
+   Usare copie dei documenti per la prima prova e conservare un backup dei template.
+2. Aprire l'editor su una rete fidata. L'avvio attuale usa `admin/admin` e Flask
+   in debug: non esporlo a Internet. Vedere l'[avviso editor](../README.md#sviluppo).
+3. Creare o importare un template, impostare cliente, nome e un campo barcode.
+   Controllare pagina e coordinate con un PDF rappresentativo.
+4. Per una prova senza AI disabilitare `barcode.ai.enabled` e
+   `aiBootstrap.enabled` in `web/src/config.json`, mantenendo le altre sezioni.
+5. Premere **Test**, confrontare il valore con il documento, poi **Scrivi template
+   su file** per rendere esplicita la versione usata dalla CLI. **Salva** da solo
+   modifica soltanto il DB.
+6. Eseguire la [CLI](#uso-da-linea-di-comando) con gli stessi cliente e nome template,
+   indicando un output JSON dedicato. Controllare codice di uscita e file prodotto.
+
+Per una lettura locale attesa verificare valore, `_barcode.NOME_CAMPO.method`
+uguale a `local` e `verified` uguale a `true`. Confrontare comunque il risultato
+con il documento: il checksum non garantisce l'identità del codice cercato.
+Ripetere su scansioni e orientamenti diversi prima dell'integrazione.
+
+Se il chiamante sarà soPDF, allineare `extractor.customer`, `extractor.template`
+e `barcode.jsonField` nel suo config. Per le pagine singole prodotte dallo split
+il campo deve riferirsi alla pagina **1**, anche se il barcode era su una pagina
+successiva del PDF originale.
 
 ## Template: file prima, database dopo
 
@@ -283,6 +329,37 @@ Il requirements attuale comprende ancora i motori OCR/HTR: non è stato ridotto.
 - Sfocatura, rumore e bassa risoluzione possono causare mancata lettura.
 - Nessuna integrazione opzionale zxing-cpp è stata aggiunta: il percorso locale
   attuale usa solo il decoder del progetto.
+
+## Problemi comuni
+
+| Sintomo | Controllo e intervento |
+|---|---|
+| Campo `N/A` | Verificare pagina, coordinate in permille, margine bianco e risoluzione. Il decoder non cerca fuori dalla zona. |
+| Letto un codice diverso | Restringere il riquadro a un solo barcode e verificare pattern e pagina del campo. |
+| Modifiche salvate ma CLI invariata | Un file in `templates/decode` precede il DB: riscrivere il file dall'editor oppure rimuoverlo per tornare al DB, dopo backup. |
+| Template non trovato o cliente non valido | Controllare nome file, proprietà `name`, `customer_file` e argomenti CLI. Un file presente ma errato non provoca fallback silenzioso al DB. |
+| Template importato ma assente sul backend | **Template JSON** carica nell'editor; usare **Scrivi template su file** per installarlo sul backend. |
+| Valore con `method: ai`, `verified: false` | Lettura AI non verificata sulle barre. Il chiamante deve applicare la propria politica di accettazione. |
+| AI chiamata con `-no-ai-bootstrap` | Il flag riguarda solo la creazione template. Disabilitare anche `barcode.ai.enabled` per impedire il fallback barcode. |
+| JSON esistente dopo un errore | Potrebbe essere un risultato precedente. Usare output distinti e non accettarlo come nuovo risultato senza verificarne l'esito. |
+| Lettura CLI OK, pagina soPDF KO | Verificare nome del campo di primo livello e regex nel config soPDF; sono controlli aggiuntivi rispetto al decoder. |
+
+Per diagnosticare conservare comando senza segreti, codice di uscita, log e JSON
+prodotto. Prima di condividerli rimuovere dati personali; non allegare `.env`.
+
+## Checklist prima di integrare
+
+- [ ] Template e cliente coerenti fra file, editor e CLI.
+- [ ] Origine del template nota (`file` o `db`) e copia di backup disponibile.
+- [ ] Campo, pagina, coordinate e pattern provati su documenti rappresentativi.
+- [ ] Politica AI esplicita: permessi globali, invio dei ritagli e costi valutati.
+- [ ] Chiamante legge il file JSON, non tenta di interpretare tutto stdout come JSON.
+- [ ] Output distinto per documento e gestione esplicita di exit 1 e risultati parziali.
+- [ ] Se richiesto, rifiuto delle letture non locali o non verificate nel chiamante.
+- [ ] Backup di `extraction.db` oltre ai file template: la CLI usa ancora il DB per i log.
+
+Il backup `.json.bak` conserva una sola versione precedente e non sostituisce un
+backup periodico. La cancellazione dall'editor non elimina il template su file.
 
 ## Verifica tecnica
 

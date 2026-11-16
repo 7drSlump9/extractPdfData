@@ -2,6 +2,34 @@
 
 Estrattore dati ordini cliente da PDF e immagini basato su template JSON.
 
+## Da dove iniziare
+
+| Obiettivo | Guida |
+|---|---|
+| Dividere PDF, rinominare le pagine e gestire invii | [Manuale soPDF](docs/MANUALE_soPDF.md) |
+| Creare template, leggere Code128 e integrare la CLI | [Manuale estrazione e decoder](docs/MANUALE_DECODE.md) |
+| Installare il progetto e conoscere editor e architettura | Questo README, da [Prerequisiti](#prerequisiti) |
+
+> **Prima del primo lancio:** nel `soPDF_config.jsonc` distribuito sono attivi
+> trasferimento SFTP ed email. Il trasferimento riuscito **elimina la copia locale
+> da `out_pdf`**; gli omonimi remoti sono sovrascritti. Per una prova isolata seguire
+> l'[avvio rapido sicuro](docs/MANUALE_soPDF.md#avvio-rapido-sicuro).
+
+### Mappa delle configurazioni
+
+| File | Governa |
+|---|---|
+| `soPDF_config.jsonc` | Split, cartelle, validazione nomi, compressione, SFTP ed email |
+| `web/src/config.json` | Motore OCR/HTR, decoder barcode e permessi AI |
+| `templates/decode/NOME.json` | Definizione del template; precede l'omonimo nel DB |
+| `extraction.db` | Template nel DB e log del lettore; non sostituisce i report soPDF |
+| `soPDF_email.jsonc` e `soPDF_email.html` | Oggetto, testo e layout del riepilogo |
+| `.env` o ambiente del processo | Chiavi API e password di test; non pubblicare credenziali |
+
+I percorsi relativi di soPDF partono dalla cartella di `soPDF.py`, **non dalla
+cartella del config**. Impostazioni del lettore e dello split sono distinte:
+`-no-ai-bootstrap` non spegne il fallback AI barcode.
+
 ## Split PDF per barcode
 
 `python soPDF.py` elabora una passata di `in_pdf`: divide le pagine, chiama
@@ -187,6 +215,12 @@ npm run dev
 
 Login: `admin / admin`
 
+> **Sicurezza editor:** le credenziali sono predefinite e `server.py` avvia Flask
+> con debug attivo su `0.0.0.0:8000`. Non esporre questo avvio a Internet o a reti
+> non fidate. La build React, da sola, non rende il backend pronto per produzione.
+> Per un uso reale servono una revisione di autenticazione, debug e distribuzione;
+> questi manuali non modificano tali impostazioni.
+
 ### Produzione
 
 ```bash
@@ -303,6 +337,15 @@ Manuale completo: [docs/MANUALE_DECODE.md](docs/MANUALE_DECODE.md).
 cd soPDF
 
 # 2. Python
+python -m pip install -r requirements.txt
+
+# 3. Tesseract OCR: vedere la sezione Prerequisiti
+
+# 4. Frontend (opzionale)
+cd web
+npm install
+```
+
 ## Bootstrap AI — Generare template con OpenRouter
 
 Quando arriva un ordine da layout sconosciuto, puoi usare l'AI per generare template + estrarre dati in un colpo solo:
@@ -323,12 +366,7 @@ Configurazione `.env`:
 OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=anthropic/claude-sonnet-5    # opzionale
 ```
-pip install -r requirements.txt
 
-# 3. Tesseract OCR (vedi sezione Prerequisiti)
-
-# 4. Frontend (opzionale)
-cd web
 ## Configurazione
 
 ### config.json (`web/src/config.json`)

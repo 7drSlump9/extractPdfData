@@ -1,5 +1,25 @@
 # soPDF — Split PDF per barcode
 
+[README](../README.md) · [Manuale estrazione e decoder](MANUALE_DECODE.md)
+
+## Indice
+
+- [Scopo e avvio](#scopo-e-avvio)
+- [Avvio rapido sicuro](#avvio-rapido-sicuro)
+- [Installazione e portabilità](#installazione-e-portabilità)
+- [Configurazione con commenti inline](#configurazione-con-commenti-inline)
+- [Omonimie, lock e sicurezza](#omonimie-lock-e-sicurezza)
+- [Ripresa dopo interruzione](#ripresa-dopo-interruzione)
+- [Trasferimento degli OK su SSH](#trasferimento-degli-ok-su-ssh)
+- [Problemi comuni](#problemi-comuni)
+- [Checklist operativa](#checklist-operativa)
+- [Verifiche](#verifiche)
+
+> **Attenzione:** il config distribuito abilita SFTP ed email. Un invio SFTP
+> riuscito rimuove il file da `out_pdf` e sovrascrive l'eventuale omonimo remoto.
+> In modalità piatta anche gli OK locali con lo stesso barcode si sovrascrivono.
+> Non eseguire il primo test con documenti unici o destinazioni di produzione.
+
 ## Scopo e avvio
 
 `soPDF.py`, accanto a `main.py`, divide PDF multipagina in pagine singole.
@@ -20,6 +40,42 @@ File arrivati dopo la scansione della cartella saranno presi alla passata succes
 Codici di uscita: **0** tutto riuscito (anche cartella vuota), **1** errori di
 documento/pagina o di lavorazione, **2** altra istanza/lock non recuperabile,
 **3** configurazione non valida. Un file ancora instabile viene saltato, non è KO.
+
+## Avvio rapido sicuro
+
+1. Installare le dipendenze e preparare un template già verificato con `main.py`;
+   vedere il [manuale decoder](MANUALE_DECODE.md). L'editor non serve durante lo split.
+2. Copiare `soPDF_config.jsonc` in un config di prova. Non sostituire l'originale.
+3. Nella copia impostare `transfer.enabled=false`, `transfer.notify.enabled=false`
+   ed `email.enabled=false`. Così si disattivano trasferimento e notifiche dei due
+   canali; il report locale resta attivo.
+4. Assegnare a **tutte** le cartelle in `paths` directory di prova distinte,
+   non annidate. In particolare `tempDir` non deve puntare ai job reali.
+   Usare percorsi assoluti per evitare ambiguità.
+5. Verificare `extractor.customer`, `extractor.template` e `barcode.jsonField`:
+   devono corrispondere al template e al campo prodotto dal lettore. Un esempio
+   con `codice_documento` non produce automaticamente il campo `barcode_top`.
+6. Impostare `parallel.maxWorkers=1` e `out_pdf_dir_separation=true`.
+   Se non si vuole usare AI, disabilitare **entrambi** i permessi nel lettore,
+   come spiegato nel [manuale decoder](MANUALE_DECODE.md#regole-di-fallback-barcode).
+7. Mettere nella cartella di ingresso una **copia** di un piccolo PDF noto.
+   Eseguire il comando seguente con percorsi assoluti adattati alla propria macchina.
+
+```powershell
+python 'C:\soPDF\soPDF.py' -config 'C:\soPDF\soPDF_test.jsonc'
+$LASTEXITCODE
+```
+
+Risultato atteso: una pagina PDF per ogni lettura OK in `out_pdf`, eventuali pagine
+KO in `err_pdf`, sorgente archiviato in `worked_pdf`, report JSON in `reportDir`
+e traccia nel log. I nomi reali delle directory sono quelli della copia del config.
+Aprire gli output, confrontare i barcode con le pagine originali e verificare
+conteggi e qualità dopo la compressione. Un exit code 0 con ingresso vuoto non
+dimostra che sia stato elaborato un documento.
+
+Solo dopo questa prova riattivare, uno alla volta, email, SFTP e scheduling.
+Per SFTP usare prima una destinazione di test: un file sparito da `out_pdf` può
+essere stato trasferito correttamente, non perso.
 
 ## Installazione e portabilità
 
@@ -57,6 +113,23 @@ non validi bloccano l'avvio prima della presa in carico. I percorsi relativi
 partono sempre dalla cartella dell'utilità, anche usando un config esterno.
 Le cartelle dati devono essere distinte e non contenute l'una nell'altra.
 
+### Default interni e config distribuito
+
+I default si applicano alle chiavi mancanti: **non sostituiscono** i valori scritti
+nel config. Per conoscere il comportamento di un lancio leggere il file utilizzato.
+
+| Impostazione | Default interno, se assente | Config distribuito attuale |
+|---|---|---|
+| `compression.dpi` | 150 | 100 |
+| `compression.jpegQuality` | 60 | 50 |
+| `barcode.validationRegex` | Nessun filtro regex | `^[sS][0-9]{7}$` |
+| `transfer.enabled` | `false` | `true` |
+| `email.enabled` | `false` | `true` |
+
+Questa tabella descrive la configurazione al momento della revisione del manuale;
+una copia locale può avere valori diversi. Le impostazioni OCR e AI sono invece
+in `web/src/config.json`; i template non vanno inseriti in quel file.
+
 ### Cartelle
 
 | Chiave in `paths` | Default | Contenuto |
@@ -67,6 +140,7 @@ Le cartelle dati devono essere distinte e non contenute l'una nell'altra.
 | `worked_pdf` | `worked_pdf` | `<outputName>/<outputName>.pdf`, sorgente elaborato |
 | `tempDir` | `temp_split` | Job, pagine, JSON, stato di ripresa e lock |
 | `logDir` | `logs` | Log di testo |
+| `reportDir` | `reports` | Report per lancio e stato delle notifiche di trasferimento |
 
 Le cartelle vengono create all'avvio. Non eliminare `temp_split` mentre lavora.
 Gli originali vengono archiviati anche se alcune pagine sono KO. Un PDF che non
@@ -394,6 +468,45 @@ solo dopo `reminderHours`, nuovo elenco subito, invio email fallito ritentato al
 prossima passata. Servono API key Brevo e destinatari validi anche per il test.
 Il normale riepilogo delle lavorazioni resta separato.
 
+## Problemi comuni
+
+| Sintomo | Controllo e intervento |
+|---|---|
+| Nessun PDF elaborato, exit 0 | Verificare `paths.in_pdf`, estensione e stabilità del file. Nuovi arrivi dopo la scansione aspettano la passata successiva. |
+| Pagina KO ma barcode visibile | Leggere il motivo nel report e il dettaglio nel log; provare `main.py` sulla pagina. Verificare template, cliente, nome del campo e regex. |
+| Output con nome inatteso o sostituito | Controllare `out_pdf_dir_separation`, barcode duplicati e normalizzazione dei nomi; con modalità piatta non ci sono suffissi protettivi per gli OK. |
+| `out_pdf` vuota dopo una lavorazione OK | Controllare gli eventi `TRANSFER` e la destinazione remota: i file inviati sono rimossi localmente. |
+| Exit 2 | Verificare che non ci sia un'altra istanza; non cancellare il lock senza controllare processo e host indicati. |
+| Exit 3 | Controllare JSONC, tipi, chiavi e separazione delle directory. Correggere prima di rilanciare. |
+| SFTP fallisce | Verificare rete, permessi, chiave host verificata e supporto alla rinomina atomica. Non aggirare la verifica dell'host. |
+| Email inattesa nonostante `email.enabled=false` | La notifica trasferimenti è separata: controllare anche `transfer.notify.enabled`. |
+| Job fermo dopo errore disco o permessi | Ripristinare spazio e accessi, conservare stato e output, poi rilanciare per la ripresa. |
+
+Per una segnalazione conservare codice di uscita, report, estratto log e config
+senza segreti. Non condividere `.env`, chiavi private o documenti sensibili.
+
+## Checklist operativa
+
+### Prima della messa in servizio
+
+- [ ] Prova isolata riuscita, con almeno una pagina OK e un caso KO controllato.
+- [ ] Barcode, rotazione e qualità degli output verificati visivamente.
+- [ ] Scelta esplicita fra sovrascrittura piatta e cartelle separate.
+- [ ] Backup di originali, template, configurazioni e DB; ripristino verificato.
+- [ ] Permessi minimi sulle cartelle e accesso limitato a log e report.
+- [ ] Destinazione SFTP, impronta host e destinatari email verificati.
+- [ ] Scheduling con interprete e percorsi espliciti, senza istanze sovrapposte.
+
+### Dopo ogni passata
+
+- [ ] Leggere exit code, conteggi del report ed eventuali errori nel log.
+- [ ] Gestire i KO senza cancellare alla cieca job o originali archiviati.
+- [ ] Controllare i trasferimenti rimasti locali e gli eventuali retry email.
+- [ ] Monitorare spazio in archivio, errori, report e temporanei conservati.
+
+I report non hanno cancellazione automatica. Definire una conservazione adeguata
+ai documenti trattati; eseguire pulizie solo a processi fermi e con backup.
+
 ## Verifiche
 
 ```powershell
@@ -424,6 +537,7 @@ Sul solo percorso template barcode del campione, la rilettura funziona bloccando
 gli import di torch, easyocr, transformers e pytesseract. Questo non prova che
 quelle librerie siano superflue per template misti o altre modalità del lettore.
 
-Suite completa eseguita: 31 test riusciti (19 split, 12 preesistenti barcode).
+Dato storico della prova sopra: 31 test riusciti (19 split, 12 preesistenti barcode).
+Non è il conteggio aggiornato della suite né una nuova esecuzione di verifica.
 I test barcode esistenti possono scrivere eventi sul DB del progetto; segnalano
 anche warning preesistenti relativi a datetime UTC e connessione SQLite aperta.
