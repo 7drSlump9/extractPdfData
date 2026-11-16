@@ -72,15 +72,17 @@ Le cartelle vengono create all'avvio. Non eliminare `temp_split` mentre lavora.
 Gli originali vengono archiviati anche se alcune pagine sono KO. Un PDF che non
 si può dividere va invece intero in `err_pdf/<outputName>/<outputName>.pdf`.
 
-`outputName` è sempre `<origine senza estensione>_ddmmyy`, con data locale di
-presa in carico. Per esempio `A.pdf` il 10/11/26 produce `A_101126`; i successivi
-omonimi producono `A_101126_1`, `A_101126_2`, ecc. L'11/11/26 si riparte da
-`A_111126`. Nessun carattere casuale. I nomi mantengono il case originale ma
+Per i nuovi job, `outputName` è `AAMMGG_<origine senza estensione>`, con data locale di
+presa in carico. Per esempio `A.pdf` il 10/11/26 produce `261110_A`; i successivi
+omonimi producono `261110_A_1`, `261110_A_2`, ecc. L'11/11/26 si riparte da
+`261111_A`. Nessun carattere casuale. I nomi mantengono il case originale ma
 le collisioni sono confrontate senza distinzione maiuscole/minuscole anche su Linux.
 Il controllo riguarda tutte e tre le destinazioni e i nomi prenotati dai job.
 
 Il nome è riservato con una cartella in `worked_pdf` prima del pickup e salvato
-in `job.json`: una ripresa, anche il giorno dopo, non cambia nome. Una cartella
+in `job.json`: una ripresa, anche il giorno dopo, non cambia nome. I job già
+avviati conservano il nome salvato, anche nel precedente formato `<origine>_GGMMAA`.
+I file e le cartelle storici non vengono rinominati. Una cartella
 di prenotazione vuota può restare dopo un errore: non viene riutilizzata né cancellata
 automaticamente. Le cartelle OK/KO vengono create solo quando servono.
 Gli ingressi sono fotografati prima di riprendere i job: anche i file arrivati
@@ -222,7 +224,7 @@ dati del documento: proteggere l'accesso ai log.
 
 Un lancio con A.pdf, B.pdf e C.pdf produce **un report JSON e una email** per
 tutti e tre. Il report si trova in `paths.reportDir` (default `reports`), con
-nome `run_<data_ora>_<id>.json`: data e id evitano collisioni. Nessun report né
+nome `run_<AAMMGG>_<HHMMSS>_<id>.json`: data, ora e id evitano collisioni. Nessun report né
 email nuova quando non ci sono elaborazioni (i soli file instabili sono saltati).
 I report non vengono cancellati automaticamente; `reports/` è ignorata da Git.
 
@@ -288,7 +290,7 @@ l'invio esattamente una volta. I report locali permettono sempre la verifica.
 
 ## Omonimie, lock e sicurezza
 
-Ogni sorgente viene spostato subito in un job con timestamp e UUID: due `a.pdf`
+Ogni sorgente viene spostato subito in un job `<AAMMGG>_<HHMMSS>_<nome>_<uuid>`: due `a.pdf`
 successivi non condividono cartelle. Non si può impedire che il mittente
 sovrascriva un file già presente in `in_pdf` **prima** della presa in carico.
 Per consegna affidabile copiare con estensione `.part` e rinominare in `.pdf`

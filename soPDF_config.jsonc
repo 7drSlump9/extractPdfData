@@ -28,7 +28,7 @@
   "lockStaleMin": 60,                  // Recupera lock vecchi solo se PID locale non più vivo
   "keepTemp": false,                   // true conserva anche i job completati per debug
   "parallel": {
-    "maxWorkers": 8                    // Mancante/null/0/1 = sequenziale; >1 = thread + subprocess
+    "maxWorkers": 1                    // Mancante/null/0/1 = sequenziale; >1 = thread + subprocess
   },
   "compression": {                     // Solo dopo lettura OK; originali e KO restano invariati
     "enabled": true,                   // false salta la compressione

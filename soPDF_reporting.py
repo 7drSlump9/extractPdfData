@@ -272,7 +272,7 @@ class RunReport:
     def __init__(self, folder, settings, template, root, logger):
         self.folder, self.settings, self.template = folder, settings, template
         self.root, self.logger = root, logger
-        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        stamp = datetime.now().strftime('%y%m%d_%H%M%S')
         self.path = folder / f'run_{stamp}_{uuid.uuid4().hex[:12]}.json'
         self.data = {'version': 1, 'runId': self.path.stem, 'startedAt': now(),
                      'finishedAt': None, 'durationSec': None, 'pdfs': [],

@@ -688,7 +688,7 @@ class Runner:
             except (OSError, ValueError, AttributeError):
                 # La prenotazione su worked_pdf resta; il job danneggiato è segnalato da run.
                 self.logger.warning('RESERVE | stato non leggibile: %s', state_path)
-        base = safe_stem(stem) + datetime.now().strftime('_%d%m%y')
+        base = datetime.now().strftime('%y%m%d_') + safe_stem(stem)
         index = 0
         while True:
             name = base + (f'_{index}' if index else '')
@@ -716,7 +716,7 @@ class Runner:
         return self.paths[key] if key == 'out_pdf' else self.paths[key] / job.folder.name
 
     def create_job(self, source):
-        job_id = datetime.now().strftime('%Y%m%d_%H%M%S_') + safe_stem(source.stem)[:40] + '_' + uuid.uuid4().hex
+        job_id = datetime.now().strftime('%y%m%d_%H%M%S_') + safe_stem(source.stem)[:40] + '_' + uuid.uuid4().hex
         folder = self.paths['tempDir'] / job_id
         folder.mkdir()
         job = Job(folder, {'version': 1, 'origin': source.name, 'phase': 'pickup',

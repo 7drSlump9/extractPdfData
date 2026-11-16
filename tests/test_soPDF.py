@@ -149,7 +149,7 @@ class SplitTests(unittest.TestCase):
         with patch.object(split.subprocess, 'run', side_effect=self.reader):
             self.assertEqual(self.runner.run(), 0)
         self.assertEqual(list(self.runner.paths['tempDir'].iterdir()), [])
-        self.assertEqual(len(list(self.runner.paths['worked_pdf'].glob('*/a_101126.pdf'))), 1)
+        self.assertEqual(len(list(self.runner.paths['worked_pdf'].glob('*/261110_a.pdf'))), 1)
 
     def test_cleanup_failure_keeps_done_state_and_resumes(self):
         source = self.input(count=1)
@@ -344,11 +344,11 @@ class SplitTests(unittest.TestCase):
         self.assertEqual(second.args[0].name, '1.rot180.pdf')
         self.assertEqual(second.args[1].name, '1.rot180.json')
         self.assertEqual(compress.call_args.args[0], second.args[0])
-        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / 'a_101126' / 'CODE.pdf') as document:
+        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / '261110_a' / 'CODE.pdf') as document:
             page = document[0]
             self.assertEqual(page.get_rotation(), 180)
             page.close()
-        with pdfium.PdfDocument(next(self.runner.paths['worked_pdf'].glob('*/a_101126.pdf'))) as document:
+        with pdfium.PdfDocument(next(self.runner.paths['worked_pdf'].glob('*/261110_a.pdf'))) as document:
             page = document[0]
             self.assertEqual(page.get_rotation(), 0)
             page.close()
@@ -402,7 +402,7 @@ class SplitTests(unittest.TestCase):
             self.assertEqual(self.runner.run(), 0)
         reader.assert_not_called()
         rotate.assert_not_called()
-        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / 'a_101126' / 'CODE.pdf') as document:
+        with pdfium.PdfDocument(self.runner.paths['out_pdf'] / '261110_a' / 'CODE.pdf') as document:
             page = document[0]
             self.assertEqual(page.get_rotation(), 180)
             page.close()
@@ -457,12 +457,12 @@ class SplitTests(unittest.TestCase):
                 patch.object(split.subprocess, 'run', side_effect=render_read) as reader:
             self.assertEqual(self.runner.run(), 0)
         self.assertEqual(reader.call_count, 2)
-        self.assertTrue((self.runner.paths['out_pdf'] / 'upside_down_101126' / 'ABC123.pdf').is_file())
+        self.assertTrue((self.runner.paths['out_pdf'] / '261110_upside_down' / 'ABC123.pdf').is_file())
 
     def test_corrupt_pdf_archived_in_error(self):
         (self.runner.paths['in_pdf'] / 'bad.pdf').write_bytes(b'not a PDF')
         self.assertEqual(self.runner.run(), 1)
-        self.assertEqual(len(list(self.runner.paths['err_pdf'].glob('bad_101126/bad_101126.pdf'))), 1)
+        self.assertEqual(len(list(self.runner.paths['err_pdf'].glob('261110_bad/261110_bad.pdf'))), 1)
 
     def test_resume_completed_pages_and_publish_intent(self):
         source = self.input(count=2)
@@ -535,24 +535,35 @@ class SplitTests(unittest.TestCase):
             names.append(job.state['outputName'])
             with patch.object(split.subprocess, 'run', side_effect=self.reader):
                 self.runner.process_job(job)
-        self.assertEqual(names, ['A_101126', 'A_101126_1', 'A_101126_2'])
+        self.assertEqual(names, ['261110_A', '261110_A_1', '261110_A_2'])
         for name in names:
             self.assertTrue((self.runner.paths['out_pdf'] / name / 'S0000854.pdf').is_file())
             self.assertTrue((self.runner.paths['worked_pdf'] / name / f'{name}.pdf').is_file())
         self.clock.now.return_value = datetime(2026, 11, 11)
         job = self.runner.create_job(self.input('A.pdf', count=1))
-        self.assertEqual(job.state['outputName'], 'A_111126')
+        self.assertEqual(job.state['outputName'], '261111_A')
+
+    def test_output_name_uses_year_month_day_prefix(self):
+        self.clock.now.return_value = datetime(2027, 2, 3)
+        job = self.runner.create_job(self.input('Sales_report.pdf', count=1))
+        self.assertEqual(job.state['outputName'], '270203_Sales_report')
+
+    def test_job_directory_uses_year_month_day_prefix(self):
+        self.clock.now.return_value = datetime(2027, 2, 3, 10, 0)
+        job = self.runner.create_job(self.input('A.pdf', count=1))
+        self.assertRegex(job.folder.name, r'^270203_100000_A_[0-9a-f]{32}$')
+        self.assertTrue(job.folder.is_dir())
 
     def test_case_insensitive_reservation_in_all_roots_and_jobs(self):
-        (self.runner.paths['out_pdf'] / 'A_101126').mkdir()
-        (self.runner.paths['err_pdf'] / 'A_101126_1').mkdir()
-        (self.runner.paths['worked_pdf'] / 'A_101126_2').mkdir()
+        (self.runner.paths['out_pdf'] / '261110_A').mkdir()
+        (self.runner.paths['err_pdf'] / '261110_A_1').mkdir()
+        (self.runner.paths['worked_pdf'] / '261110_A_2').mkdir()
         job = self.runner.create_job(self.input('a.PDF', count=1))
-        self.assertEqual(job.state['outputName'], 'a_101126_3')
+        self.assertEqual(job.state['outputName'], '261110_a_3')
         # La prenotazione nello stato resta efficace anche senza cartella su worked_pdf.
         (self.runner.paths['worked_pdf'] / job.state['outputName']).rmdir()
         next_job = self.runner.create_job(self.input('A.pdf', count=1))
-        self.assertEqual(next_job.state['outputName'], 'A_101126_4')
+        self.assertEqual(next_job.state['outputName'], '261110_A_4')
 
     def test_three_sources_separate_ok_and_error_directories(self):
         for name in ('A.pdf', 'b.pdf', 'c.pdf'):
@@ -565,7 +576,7 @@ class SplitTests(unittest.TestCase):
 
         with patch.object(split.subprocess, 'run', side_effect=reader):
             self.assertEqual(self.runner.run(), 1)
-        for name in ('A_101126', 'b_101126', 'c_101126'):
+        for name in ('261110_A', '261110_b', '261110_c'):
             self.assertTrue((self.runner.paths['out_pdf'] / name / 'S0000854.pdf').is_file())
             self.assertTrue((self.runner.paths['err_pdf'] / name / f'{name}_p2.pdf').is_file())
             self.assertTrue((self.runner.paths['worked_pdf'] / name / f'{name}.pdf').is_file())
@@ -574,8 +585,8 @@ class SplitTests(unittest.TestCase):
         self.input(count=2)
         with patch.object(split, 'extract_barcode', side_effect=split.PageError('empty')):
             self.assertEqual(self.runner.run(), 1)
-        self.assertFalse((self.runner.paths['out_pdf'] / 'a_101126').exists())
-        self.assertEqual(len(list((self.runner.paths['err_pdf'] / 'a_101126').glob('*.pdf'))), 2)
+        self.assertFalse((self.runner.paths['out_pdf'] / '261110_a').exists())
+        self.assertEqual(len(list((self.runner.paths['err_pdf'] / '261110_a').glob('*.pdf'))), 2)
 
     def test_snapshot_ignores_arrivals_during_resume_and_processing(self):
         self.runner.create_job(self.input('old.pdf', count=1))
@@ -606,7 +617,20 @@ class SplitTests(unittest.TestCase):
         with patch.object(split.subprocess, 'run', side_effect=self.reader):
             self.assertEqual(self.runner.run(), 0)
         self.assertTrue((self.runner.paths['out_pdf'] / job.state['outputName'] / 'S0000854.pdf').is_file())
-        self.assertEqual(job.state['outputName'], 'a_101126')
+        self.assertEqual(job.state['outputName'], '261110_a')
+
+    def test_resume_keeps_previous_date_format(self):
+        job = self.runner.create_job(self.input(count=1))
+        (self.runner.paths['worked_pdf'] / job.state['outputName']).rmdir()
+        job.state['outputName'] = 'a_101126'
+        (self.runner.paths['worked_pdf'] / job.state['outputName']).mkdir()
+        job.save()
+        self.clock.now.return_value = datetime(2026, 11, 11)
+        with patch.object(split.subprocess, 'run', side_effect=self.reader):
+            self.assertEqual(self.runner.run(), 0)
+        self.assertTrue((self.runner.paths['out_pdf'] / 'a_101126' / 'S0000854.pdf').is_file())
+        self.assertTrue((self.runner.paths['worked_pdf'] / 'a_101126' / 'a_101126.pdf').is_file())
+        self.assertFalse((self.runner.paths['worked_pdf'] / '261111_a').exists())
 
     def test_legacy_partial_job_keeps_old_paths(self):
         source = self.input(count=2)
@@ -626,7 +650,7 @@ class SplitTests(unittest.TestCase):
         self.input(count=2)
         with patch.object(split, 'extract_barcode', side_effect=['S0000957', 's0000957']):
             self.assertEqual(self.runner.run(), 0)
-        names = sorted(p.name for p in (self.runner.paths['out_pdf'] / 'a_101126').iterdir())
+        names = sorted(p.name for p in (self.runner.paths['out_pdf'] / '261110_a').iterdir())
         self.assertEqual(names, ['S0000957.pdf', 's0000957_1.pdf'])
 
     def flat_job(self, count=2):
@@ -662,7 +686,7 @@ class SplitTests(unittest.TestCase):
         out = self.runner.paths['out_pdf']
         self.assertEqual([p.name for p in out.iterdir()], ['S0000854.pdf'])
         self.assertEqual((out / 'S0000854.pdf').read_bytes(), expected)
-        self.assertTrue((self.runner.paths['worked_pdf'] / 'a_101126' / 'a_101126.pdf').is_file())
+        self.assertTrue((self.runner.paths['worked_pdf'] / '261110_a' / '261110_a.pdf').is_file())
 
     def test_flat_different_sources_last_wins(self):
         self.cfg['out_pdf_dir_separation'] = False
@@ -781,7 +805,7 @@ class SplitTests(unittest.TestCase):
         self.cfg['out_pdf_dir_separation'] = False
         with patch.object(split.subprocess, 'run', side_effect=self.reader):
             self.assertEqual(self.runner.run(), 0)
-        self.assertTrue((self.runner.paths['out_pdf'] / 'a_101126' / 'S0000854.pdf').is_file())
+        self.assertTrue((self.runner.paths['out_pdf'] / '261110_a' / 'S0000854.pdf').is_file())
 
     def test_file_stability(self):
         source = self.input(count=1)

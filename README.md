@@ -10,8 +10,8 @@ Originali e pagine KO sono separati per job, con ripresa dopo interruzione.
 `out_pdf_dir_separation` è `false` per default: OK direttamente in `out_pdf`,
 senza sottocartelle; barcode uguali si **sovrascrivono**, anche nello stesso PDF.
 Con `true`, anche gli OK usano la sottocartella per sorgente come KO e archivio:
-`A_101126`, poi `A_101126_1`, `_2`, ecc. per omonimi nello stesso giorno.
-La data è sempre presente; nomi confrontati senza distinzione maiuscole/minuscole.
+`261110_A`, poi `261110_A_1`, `_2`, ecc. per omonimi nello stesso giorno.
+La data è sempre un prefisso `AAMMGG_`; nomi confrontati senza distinzione maiuscole/minuscole.
 Con `true`, barcode duplicati dentro un PDF conservano i suffissi `_1`, `_2`, ecc.
 Con `false` e più worker, vince l'ultima pubblicazione, non necessariamente l'ultima pagina:
 impostare `parallel.maxWorkers` a 0 o 1 per lavorazione sequenziale.
@@ -20,6 +20,8 @@ Configurazione commentata inline: `soPDF_config.jsonc`; log con rotazione (defau
 Ogni lancio con elaborazioni produce **un solo report** JSON in `reports` e
 un riepilogo email tramite Brevo (nessun allegato). A.pdf, B.pdf, C.pdf: un report,
 una email, con tempi e conteggi per PDF e nomi dei file in errore.
+Date nei nomi di job e report in formato `AAMMGG`: job `AAMMGG_HHMMSS_nome_uuid`,
+report `run_AAMMGG_HHMMSS_id.json`. File e cartelle già esistenti restano invariati.
 Oggetto e corpo si modificano in `soPDF_email.jsonc`, con segnaposto documentati.
 Layout a tabelle in `soPDF_email.html`: riepilogo Fogli totali/OK/KO e un blocco
 per PDF, con una riga per ogni foglio in errore e relativo motivo breve.

@@ -1,5 +1,6 @@
 """Test report/email isolati: nessuna rete, nessuna chiave reale."""
 import copy
+from datetime import datetime
 import io
 import json
 import logging
@@ -28,13 +29,22 @@ class ReportingTests(unittest.TestCase):
         return reporting.RunReport(self.root / 'reports', self.settings, self.template, self.root, self.logger)
 
     def entry(self, name='A.pdf', failed=False):
-        return {'jobId': name, 'file': name, 'outputName': name + '_101126',
+        return {'jobId': name, 'file': name, 'outputName': '261110_' + Path(name).stem,
                 'startedAt': reporting.now(), 'finishedAt': reporting.now(), 'durationSec': 2,
                 'totalPages': 3, 'processedPages': 3, 'ok': 2 if failed else 3,
                 'ko': int(failed), 'rotated': 1, 'resumed': False,
                 'status': 'parziale' if failed else 'ok',
-                'errors': [{'file': 'A_101126_p3.pdf', 'page': 3, 'reason': '<non letto>',
+                'errors': [{'file': '261110_A_p3.pdf', 'page': 3, 'reason': '<non letto>',
                             'reasonShort': 'Barcode <non letto>'}] if failed else []}
+
+    def test_report_name_uses_year_month_day(self):
+        with patch.object(reporting, 'datetime', wraps=datetime) as clock:
+            clock.now.return_value = datetime(2027, 2, 3, 10, 0)
+            report = self.run_report()
+        report.record(self.entry())
+        self.assertRegex(report.path.name, r'^run_270203_100000_[0-9a-f]{12}\.json$')
+        self.assertEqual(report.data['runId'], report.path.stem)
+        self.assertTrue(report.path.is_file())
 
     def test_one_report_one_email_three_pdfs(self):
         report = self.run_report()
@@ -49,7 +59,7 @@ class ReportingTests(unittest.TestCase):
         self.assertEqual(stored['totals']['ok'], 8)
         self.assertEqual(stored['totals']['ko'], 1)
         self.assertEqual(stored['email']['status'], 'sent')
-        self.assertIn('A_101126_p3.pdf', sender.call_args.args[1]['textContent'])
+        self.assertIn('261110_A_p3.pdf', sender.call_args.args[1]['textContent'])
         self.assertIn('&lt;non letto&gt;', sender.call_args.args[1]['htmlContent'])
         self.assertEqual(len(list(report.folder.glob('*.json'))), 1)
 
@@ -169,14 +179,14 @@ class ReportingTests(unittest.TestCase):
         doc = self.entry('ptv_ruotata.pdf', True)
         detail = (r'prima lettura: exit=1 stdout=C:\Users\utente\temp_split\23.pdf '
                   r'\n======= ORDINE ESTRATTO barcode_top: N/A stderr=; lettura a 180°: exit=1 stdout=')
-        doc['errors'] = [{'file': f'ptv_ruotata_101126_p{n}.pdf', 'page': n, 'reason': detail}
+        doc['errors'] = [{'file': f'261110_ptv_ruotata_p{n}.pdf', 'page': n, 'reason': detail}
                          for n in (23, 24, 25)]
         report.record(doc)
         rendered, _ = reporting.render_email([report.data], self.template)
         for body in (rendered['textContent'], rendered['htmlContent']):
             self.assertNotIn('23, 24, 25', body)
             for number in (23, 24, 25):
-                self.assertIn(f'ptv_ruotata_101126_p{number}.pdf', body)
+                self.assertIn(f'261110_ptv_ruotata_p{number}.pdf', body)
             self.assertIn('Barcode non letto (anche dopo rotazione 180°)', body)
             self.assertNotIn('stdout', body)
             self.assertNotIn('stderr', body)
@@ -191,7 +201,7 @@ class ReportingTests(unittest.TestCase):
         for number in (23, 24, 25):
             self.assertIn(f'Foglio {number}:', rendered['textContent'])
             row = next(row for row in rendered['htmlContent'].split('<tr')
-                       if f'ptv_ruotata_101126_p{number}.pdf' in row)
+                       if f'261110_ptv_ruotata_p{number}.pdf' in row)
             self.assertIn(f'>{number}</td>', row)
             self.assertIn('Barcode non letto', row)
 
