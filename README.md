@@ -478,3 +478,16 @@ Browser → React → carica PDF (pdfjs-dist)
               ← JSON risultato
        → salva template → POST /api/templates → db.py
 ```
+### Heartbeat di fine passata
+
+`lastPush` in `soPDF_config.jsonc` configura il nome del file heartbeat
+(default `last.push`, solo nome file, non PDF). Ogni passata completata, anche
+senza documenti o con errori gestiti, aggiorna una sola riga `AAMMDD_HHMMSS`
+(ora locale del server). Viene scritto dopo trasferimenti e report, nella radice
+di `transfer.remoteDir` tramite SFTP; con trasferimento disabilitato resta in
+`paths.out_pdf`. Non indica che tutti i PDF siano stati consegnati.
+
+La pubblicazione remota usa sostituzione atomica e i tentativi `transfer.retries`.
+Se fallisce, il precedente heartbeat resta invariato e il programma restituisce
+errore, registrato nel log. Nessun aggiornamento in caso di configurazione
+non valida, lock occupato, arresto forzato o errore fatale prima del fine passata.

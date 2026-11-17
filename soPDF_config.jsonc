@@ -22,6 +22,7 @@
     "invalidValues": ["N/A", ""],      // Valori considerati mancata lettura
     "rotationOnFailureReading": true   // Al primo fallimento ruota la pagina di 180° e rilegge una volta
   },
+  "lastPush": "last.push",             // Heartbeat a fine passata: AAMMDD_HHMMSS; remoto SFTP, locale se disabilitato
   "out_pdf_dir_separation": false,     // false: OK tutti in out_pdf, sovrascrive; true: cartelle per sorgente + suffissi
   "onDuplicate": "suffix_n",           // _1, _2, ...; non applicato agli OK in modalità piatta (sovrascrive)
   "minFileAgeSec": 5,                  // Intervallo di stabilità dimensione/data prima del pickup

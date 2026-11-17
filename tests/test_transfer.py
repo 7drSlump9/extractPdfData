@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime
 import errno
 import json
 import logging
@@ -224,10 +225,63 @@ class TransferTests(unittest.TestCase):
                 self.assertLogs(self.logger, logging.ERROR):
             self.assertEqual(split.Runner(cfg, self.logger).run(), 1)
         self.assertFalse(source.exists())
-        self.assertEqual(self.sftp.files, {'/incoming/a.pdf': b'new'})
+        self.assertEqual(self.sftp.files['/incoming/a.pdf'], b'new')
+        self.assertIn('/incoming/last.push', self.sftp.files)
+
+    def test_heartbeat_empty_pass_overwrites_remote_custom_name(self):
+        self.sftp.files['/incoming/alive.txt'] = b'old'
+        with patch.object(transfer, 'connect', return_value=(self.client, self.sftp)), \
+                patch.object(transfer, 'datetime') as clock:
+            clock.now.return_value = datetime(2026, 11, 17, 14, 5, 9)
+            transfer.heartbeat(self.cfg, self.paths, self.root, 'alive.txt', self.logger)
+        self.assertEqual(self.sftp.files, {'/incoming/alive.txt': b'261117_140509\n'})
+        self.assertEqual(list(self.paths['tempDir'].iterdir()), [])
+        self.assertEqual(list(self.paths['out_pdf'].iterdir()), [])
+
+    def test_heartbeat_disabled_writes_local(self):
+        self.cfg['enabled'] = False
+        marker = self.paths['out_pdf'] / 'last.push'
+        marker.write_text('old')
+        with patch.object(transfer, 'connect') as connect:
+            transfer.heartbeat(self.cfg, self.paths, self.root, 'last.push', self.logger)
+        connect.assert_not_called()
+        self.assertRegex(marker.read_text(), r'^\d{6}_\d{6}\n$')
+
+    def test_heartbeat_failure_retries_and_preserves_old_remote(self):
+        self.sftp.files['/incoming/last.push'] = b'old'
+        self.sftp.fail_rename = True
+        with patch.object(transfer, 'connect', return_value=(self.client, self.sftp)) as connect:
+            with self.assertRaises(OSError):
+                transfer.heartbeat(self.cfg, self.paths, self.root, 'last.push', self.logger)
+        self.assertEqual(connect.call_count, self.cfg['retries'])
+        self.assertEqual(self.sftp.files, {'/incoming/last.push': b'old'})
+        self.assertEqual(list(self.paths['tempDir'].iterdir()), [])
+
+    def test_runner_empty_pass_heartbeat_after_report_even_on_failure(self):
+        cfg = copy.deepcopy(split.DEFAULTS)
+        cfg['paths'] = {key: str(self.root / key) for key in cfg['paths']}
+        for folder in cfg['paths'].values():
+            Path(folder).mkdir(exist_ok=True)
+        events = []
+        with patch.object(split.reporting.RunReport, 'finish', side_effect=lambda: events.append('report')), \
+                patch.object(transfer, 'heartbeat', side_effect=lambda *args: events.append('heartbeat')):
+            self.assertEqual(split.Runner(cfg, self.logger).run(), 0)
+        self.assertEqual(events, ['report', 'heartbeat'])
+        with patch.object(split.reporting.RunReport, 'finish', side_effect=OSError()), \
+                patch.object(transfer, 'heartbeat') as heartbeat:
+            self.assertEqual(split.Runner(cfg, self.logger).run(), 1)
+        heartbeat.assert_called_once()
+        with patch.object(transfer, 'heartbeat', side_effect=OSError()):
+            self.assertEqual(split.Runner(cfg, self.logger).run(), 1)
 
     def test_config_validation(self):
         config = self.root / 'config.jsonc'
+        config.write_text('{}', encoding='utf-8')
+        self.assertEqual(split.load_config(config)['lastPush'], 'last.push')
+        for name in ('', '../last.push', 'a/b', 'a\\b', '..', 'marker.pdf', 123):
+            config.write_text(json.dumps({'lastPush': name}), encoding='utf-8')
+            with self.subTest(name=name), self.assertRaises(split.ConfigError):
+                split.load_config(config)
         for invalid in ({'port': 0}, {'retries': 0}, {'port': 22.5},
                         {'enabled': True, 'host': 'host', 'remoteDir': 'relative'},
                         {'passwordEnvVar': 'BAD NAME'}):

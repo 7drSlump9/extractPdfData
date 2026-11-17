@@ -705,7 +705,7 @@ class SplitTests(unittest.TestCase):
         with patch.object(split.subprocess, 'run', side_effect=self.reader):
             self.runner.process_job(job)
         self.assertEqual((self.runner.paths['out_pdf'] / 'S0000854.pdf').read_bytes(), expected)
-        self.assertEqual(len(list(self.runner.paths['out_pdf'].iterdir())), 1)
+        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*.pdf'))), 1)
 
     def test_flat_case_change_keeps_new_name(self):
         job = self.flat_job()
@@ -739,7 +739,7 @@ class SplitTests(unittest.TestCase):
             self.assertEqual(self.runner.run(), 0)
         reader.assert_not_called()
         self.assertEqual(target.read_bytes(), expected)
-        self.assertEqual(len(list(target.parent.iterdir())), 1)
+        self.assertEqual(len(list(target.parent.glob('*.pdf'))), 1)
 
     def test_flat_interrupted_case_rename_resumes(self):
         job = self.flat_job(count=1)
@@ -759,7 +759,7 @@ class SplitTests(unittest.TestCase):
         with patch.object(split, 'extract_barcode') as reader:
             self.assertEqual(self.runner.run(), 0)
         reader.assert_not_called()
-        files = list(out.iterdir())
+        files = list(out.glob('*.pdf'))
         self.assertEqual(len(files), 1)
         self.assertEqual(files[0].name, 's0000957.pdf')
         with pdfium.PdfDocument(files[0]) as document:
@@ -795,7 +795,7 @@ class SplitTests(unittest.TestCase):
             self.assertEqual(self.runner.run(), 0)
         self.assertIn('ordine sovrascritture non garantito', '\n'.join(logs.output))
         self.assertEqual(self.cfg['parallel']['maxWorkers'], 3)
-        self.assertEqual(len(list(self.runner.paths['out_pdf'].iterdir())), 1)
+        self.assertEqual(len(list(self.runner.paths['out_pdf'].glob('*.pdf'))), 1)
 
     def test_previous_folder_job_keeps_folders_after_config_change(self):
         job = self.runner.create_job(self.input(count=1))

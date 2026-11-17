@@ -35,6 +35,7 @@ ROOT = Path(__file__).resolve().parent
 PDFIUM_LOCK = threading.RLock()
 DEFAULTS = {
     'transfer': transfer.DEFAULTS,
+    'lastPush': 'last.push',
     'extractor': {'python': '', 'mainPy': '', 'customer': 'UNKNOWN',
                   'template': 'barcode001', 'extraArgs': ['-no-ai-bootstrap'], 'timeoutSec': 120},
     'paths': {'in_pdf': 'in_pdf', 'out_pdf': 'out_pdf', 'err_pdf': 'err_pdf',
@@ -191,6 +192,9 @@ def load_config(path):
         raise ConfigError('engine supportato: raster; onDuplicate supportato: suffix_n')
     if cfg['log']['level'] not in ('DEBUG', 'INFO', 'WARN', 'WARNING', 'ERROR'):
         raise ConfigError('log.level non valido')
+    name = cfg['lastPush']
+    if not name or re.search(r'[\\/:*?"<>|\x00-\x1f]', name) or name in ('.', '..') or name.lower().endswith('.pdf'):
+        raise ConfigError('lastPush: richiesto nome file sicuro, non PDF')
     name = cfg['log']['fileName']
     if not name or re.search(r'[\\/:*?"<>|\x00-\x1f]', name) or name in ('.', '..'):
         raise ConfigError('log.fileName: richiesto solo nome file sicuro')
@@ -935,6 +939,11 @@ class Runner:
             self.logger.warning('REPORT/EMAIL | riepilogo conservato, completamento fallito (%s)', type(exc).__name__)
             # Fallimento persistenza report deve risultare errore; invio fallito è gestito internamente.
             errors = True
+        try:
+            transfer.heartbeat(self.cfg['transfer'], self.paths, ROOT, self.cfg['lastPush'], self.logger)
+        except Exception as exc:
+            errors = True
+            self.logger.warning('HEARTBEAT | aggiornamento fallito (%s)', type(exc).__name__)
         return int(errors or self.totals['ko'] > 0 or self.totals['failed'] > 0)
 
 

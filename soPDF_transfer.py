@@ -1,11 +1,13 @@
 """Trasferimento SFTP su SSH: pubblicazione atomica, poi rimozione locale."""
 import copy
+from datetime import datetime
 import errno
 import getpass
 import json
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import tempfile
 import uuid
 
 import soPDF_reporting as reporting
@@ -191,3 +193,33 @@ def run(cfg, paths, email, root, logger):
             client.close()
     notify(cfg, email, root, paths['reportDir'] / 'transfer_state.json', failures, logger)
     return bool(failures)
+
+def heartbeat(cfg, paths, root, name, logger):
+    """Evidenza di fine passata, anche senza PDF o dopo errori gestiti."""
+    timestamp = datetime.now().strftime('%y%m%d_%H%M%S') + '\n'
+    if not cfg['enabled']:
+        destination = paths['out_pdf'] / name
+        destination.write_bytes(timestamp.encode('ascii'))
+        logger.info('HEARTBEAT | aggiornato: %s', destination)
+        return
+    destination = str(PurePosixPath(cfg['remoteDir']) / name)
+    # Fuori da out_pdf: il marker non entra nella coda dei documenti.
+    with tempfile.TemporaryDirectory(prefix='heartbeat-', dir=paths['tempDir']) as folder:
+        source = Path(folder) / name
+        source.write_bytes(timestamp.encode('ascii'))
+        for attempt in range(cfg['retries']):
+            client = sftp = None
+            try:
+                client, sftp = connect(cfg, root)
+                mkdirs(sftp, cfg['remoteDir'])
+                upload(sftp, source, destination)
+                logger.info('HEARTBEAT | aggiornato remoto: %s', destination)
+                return
+            except Exception:
+                if attempt + 1 == cfg['retries']:
+                    raise
+            finally:
+                if sftp is not None:
+                    sftp.close()
+                if client is not None:
+                    client.close()
