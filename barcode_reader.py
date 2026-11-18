@@ -72,7 +72,7 @@ def _symbols_to_text(symbols):
     return None if shift or upper_once else "".join(result)
 
 
-def _decode_runs(runs):
+def _decode_runs(runs, accept=None):
     for start in range(0, len(runs) - 18, 2):
         if start and runs[start - 1] < sum(runs[start:start + 6]) / 11 * 3:
             continue
@@ -92,8 +92,11 @@ def _decode_runs(runs):
                     checksum = (symbols[0] + sum(i * v for i, v in enumerate(symbols[1:-1], 1))) % 103
                     if checksum == symbols[-1]:
                         text = _symbols_to_text(symbols)
-                        if text:
+                        if text and (accept is None or accept(text)):
                             return text
+                        # A complete but unwanted barcode must not hide later
+                        # start symbols on this same scanline.
+                        break
             widths = np.asarray(runs[pos:pos + 6], dtype=float)
             local_unit = widths.sum() / 11
             if not 0.65 < local_unit / unit < 1.5:
@@ -106,7 +109,7 @@ def _decode_runs(runs):
     return None
 
 
-def _scan(image):
+def _scan(image, accept=None):
     array = np.asarray(image, dtype=np.uint8)
     # Multiple heights cover a barcode anywhere inside the search rectangle.
     rows = np.unique(np.linspace(0, array.shape[0] - 1, min(81, array.shape[0])).astype(int))
@@ -123,13 +126,19 @@ def _scan(image):
                 runs = np.diff(boundaries)
                 if not line[0]:
                     runs = runs[1:]
-                text = _decode_runs(runs)
+                text = _decode_runs(runs, accept)
                 if text:
                     return text
     return None
 
 
-def decode_code128(image, try_rotations=True):
+def decode_code128(image, try_rotations=True, pattern=None):
+    """Return the first checksum-valid payload matching the optional regex.
+
+    Search semantics match template patterns; use anchors for a full-value rule.
+    Rejected payloads do not stop scanline or rotation searches.
+    """
+    accept = re.compile(pattern).search if pattern else None
     gray = image.convert("L")
     # Start with the unchanged crop; then deskew at bounded angles.
     angles = [0]
@@ -139,7 +148,7 @@ def decode_code128(image, try_rotations=True):
                    for base in (0, 90) for sign in (-1, 1)]
     for angle in angles:
         candidate = gray if not angle else gray.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=255)
-        text = _scan(candidate)
+        text = _scan(candidate, accept)
         if text:
             return text
     return None
@@ -168,7 +177,7 @@ def _ai_decode(crop, settings):
     return value if isinstance(value, str) and value else None
 
 
-def barcode_zone(image, x, y, w, h, config=None, ai_fallback=None):
+def barcode_zone(image, x, y, w, h, config=None, ai_fallback=None, pattern=None):
     from template_store import load_config
     settings = config if config is not None else load_config()["barcode"]
     margin = float(settings.get("searchMargin", 0.10))
@@ -180,7 +189,7 @@ def barcode_zone(image, x, y, w, h, config=None, ai_fallback=None):
     if box[2] <= box[0] or box[3] <= box[1]:
         raise ValueError("Zona barcode fuori pagina")
     crop = image.crop(box)
-    value = decode_code128(crop, settings.get("tryRotations", True))
+    value = decode_code128(crop, settings.get("tryRotations", True), pattern=pattern)
     if value:
         return {"value": value, "method": "local", "verified": True}
     ai = settings.get("ai", {})
@@ -190,6 +199,6 @@ def barcode_zone(image, x, y, w, h, config=None, ai_fallback=None):
             value = _ai_decode(crop, ai)
         except Exception as exc:
             raise RuntimeError(f"Fallback AI barcode fallito: {type(exc).__name__}") from exc
-        if value:
+        if value and (not pattern or re.search(pattern, value)):
             return {"value": value, "method": "ai", "verified": False}
     return {"value": "N/A", "method": "none", "verified": False}

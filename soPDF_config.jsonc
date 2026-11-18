@@ -48,7 +48,7 @@
     "level": "INFO"                    // DEBUG, INFO, WARN, WARNING o ERROR
   },
   "transfer": {                        // SFTP su SSH (non protocollo SCP legacy); solo out_pdf
-    "enabled": true,                  // Attivare dopo aver impostato host e remoteDir
+    "enabled": false,                  // Attivare dopo aver impostato host e remoteDir
     "host": "212.39.9.70",                        // Host SSH o alias in ~/.ssh/config
     "port": 22,
     "user": "keyfor",                        // Vuoto = User da ~/.ssh/config, poi utente locale
@@ -65,7 +65,7 @@
     }
   },
   "email": {                           // API Brevo HTTPS; nessun allegato
-    "enabled": true,                   // false mantiene solo i report locali
+    "enabled": false,                   // false mantiene solo i report locali
     "sendOn": "always",                // always | error | never; niente invio per passata vuota
     "apiKeyEnvVar": "BREVO_API_KEY",    // Nome della variabile in ambiente o nel file .env
     "from": {"name": "soPDF", "email": "consegne@sogesispa.it"},

@@ -474,7 +474,7 @@ def extract_barcode_field(config, page_images):
     width, height = image.size
     result = barcode_zone(image, x0 * width / 1000, y0 * height / 1000,
                           (x1 - x0) * width / 1000, (y1 - y0) * height / 1000,
-                          ai_fallback=config.get('ai_fallback'))
+                          ai_fallback=config.get('ai_fallback'), pattern=config.get('pattern'))
     pattern = config.get('pattern')
     if result['value'] != 'N/A' and pattern and pattern != '.+':
         match = re.search(pattern, result['value'])
